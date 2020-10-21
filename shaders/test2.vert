@@ -2,15 +2,18 @@
 
 layout(location = 0) in vec3 pos;
 layout(location = 1) in vec3 normal;
+layout(location = 2) in vec2 uv;
 
-layout(location = 0) out vec3 vCol;
+layout(location = 0) out vec3 vNormal;
+layout(location = 1) out vec2 vUV;
 
-layout(std430, push_constant) uniform constants {
+layout(push_constant) uniform constants {
 	mat4 mvp;
 };
 
 void main() {
 	gl_Position = mvp * vec4( pos, 1.0 );
-	vCol = normal;//pos.xyz * 0.5 + 0.5;//colours[gl_VertexIndex%3];
+	vNormal = normal;
+	vUV = uv;
 }
 

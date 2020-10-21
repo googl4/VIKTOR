@@ -161,6 +161,19 @@ static inline mat4 mat4_perspective( float fov, float aspect, float n, float f )
 	return m;
 }
 
+static inline mat4 mat4_perspectiveReverseZ( float fov, float aspect, float n ) {
+	mat4 m = {};
+	
+	float a = 1.0f / tanf( fov / 2.0f );
+	
+	m.c[0][0] = a / aspect;
+	m.c[1][1] = a;
+	m.c[2][3] = -1.0f;
+	m.c[3][2] = n;
+	
+	return m;
+}
+
 static inline mat4 mat4_lookat( vec4 eye, vec4 centre, vec4 up ) {
 	mat4 m = {};
 	

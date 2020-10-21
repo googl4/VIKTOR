@@ -24,4 +24,10 @@ typedef struct {
 	vec4 c[4];
 } mat4;
 
+#define DECL_MIN( type ) static inline type min( type a, type b ) { return a < b ? a : b; }
+#define DECL_MAX( type ) static inline type max( type a, type b ) { return a > b ? a : b; }
+
+DECL_MIN( s64 )
+DECL_MAX( s64 )
+
 #endif

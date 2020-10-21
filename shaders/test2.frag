@@ -1,15 +1,18 @@
 #version 450 core
 
-layout(location = 0) in vec3 vCol;
+layout(location = 0) in vec3 normal;
+layout(location = 1) in vec2 uv;
 
 layout(location = 0) out vec4 colour;
 
-layout(std430, push_constant) uniform constants {
+layout(push_constant) uniform constants {
 	layout(offset = 64) vec4 lightDir;
+	layout(offset = 80) uint tIdx;
 };
 
+layout(set = 0, binding = 0) uniform texture2D tex[64];
+layout(set = 0, binding = 1) uniform sampler s;
+
 void main() {
-	vec3 n = vCol;
-	float l = max( 0, dot( n, -lightDir.xyz ) );
-	colour = vec4( l, l, l, 1.0 );
+	colour = texture( sampler2D( tex[tIdx], s ), uv );
 }

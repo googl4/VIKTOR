@@ -23,8 +23,8 @@ u32 reserveBlock( memoryPool_t* pool ) {
 		int n = __builtin_ffsll( ~pool->blocks[i] );
 		if( n > 0 ) {
 			n -= 1;
-			pool->blocks[i] |= 1 << n;
 			if( __builtin_expect( i * 64 + n < pool->numBlocks, TRUE ) ) {
+				pool->blocks[i] |= 1 << n;
 				return i * 64 + n;
 			} else {
 				return UINT32_MAX;

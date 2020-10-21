@@ -33,6 +33,7 @@ typedef enum {
 	VKTR_FORMAT_RGBA16F,
 	VKTR_FORMAT_RGBA32F,
 	VKTR_FORMAT_RGB32F,
+	VKTR_FORMAT_RG32F,
 	VKTR_FORMAT_D32F
 } VKTR_Format;
 
@@ -84,7 +85,8 @@ typedef enum {
 
 typedef enum {
 	VKTR_WINDOWFLAG_VSYNC = 0x01,
-	VKTR_WINDOWFLAG_TRIPLEBUFFER = 0x02
+	VKTR_WINDOWFLAG_TRIPLEBUFFER = 0x02,
+	VKTR_WINDOWFLAG_BORDERLESS = 0x04
 } VKTR_WindowFlags;
 
 typedef enum {
@@ -95,6 +97,29 @@ typedef enum {
 	VKTR_DESCRIPTOR_INPUT_ATTACHMENT,
 	VKTR_DESCRIPTOR_INLINE_UNIFORM
 } VKTR_DescriptorType;
+
+typedef enum {
+	VKTR_FILTER_NEAREST,
+	VKTR_FILTER_LINEAR
+} VKTR_FilterMode;
+
+typedef enum {
+	VKTR_WRAP_REPEAT,
+	VKTR_WRAP_MIRROR,
+	VKTR_WRAP_CLAMP
+} VKTR_WrapMode;
+
+typedef enum {
+	VKTR_IMAGELAYOUT_UNDEFINED,
+	VKTR_IMAGELAYOUT_GENERAL,
+	VKTR_IMAGELAYOUT_COLOUR_ATTACHMENT,
+	VKTR_IMAGELAYOUT_DEPTH_ATTACHMENT,
+	VKTR_IMAGELAYOUT_DEPTH_ATTACHMENT_READ_ONLY,
+	VKTR_IMAGELAYOUT_SHADER_READ,
+	VKTR_IMAGELAYOUT_TRANSFER_SRC,
+	VKTR_IMAGELAYOUT_TRANSFER_DST,
+	VKTR_IMAGELAYOUT_PRESENT
+} VKTR_ImageLayout;
 
 typedef struct {
 	int x, y, w, h;
@@ -109,8 +134,13 @@ typedef void* VKTR_Shader;
 typedef void* VKTR_Pipeline;
 typedef void* VKTR_RenderPass;
 typedef void* VKTR_Semaphore;
+typedef void* VKTR_DescriptorSet;
+typedef void* VKTR_Sampler;
+typedef void* VKTR_DescriptorPool;
+typedef void* VKTR_CommandPool;
 
-const static void* VKTR_INVALID_HANDLE = NULL;
+//const static void* VKTR_INVALID_HANDLE = NULL;
+#define VKTR_INVALID_HANDLE NULL
 
 void VKTR_Init( const char* appName );
 VKTR_Queue VKTR_GetQueue( VKTR_QueueType type );
@@ -119,6 +149,7 @@ VKTR_Window VKTR_CreateWindow( u32 width, u32 height, const char* title, VKTR_Wi
 int VKTR_WindowClosed( VKTR_Window window );
 void VKTR_Update( VKTR_Queue queue, VKTR_Window window, VKTR_Semaphore waitSemaphore );
 //VKTR_Image VKTR_GetWindowSurface( VKTR_Window window );
+int VKTR_GetSwapchainLength( VKTR_Window window );
 VKTR_Image VKTR_GetSwapchainImage( VKTR_Window window, u32 n );
 u32 VKTR_GetNextImage( VKTR_Window window, VKTR_Semaphore availableSemaphore );
 
@@ -139,26 +170,40 @@ VKTR_Shader VKTR_LoadShader( const void* data, u64 dataSize );
 void VKTR_FreeShader( VKTR_Shader shader );
 
 VKTR_RenderPass VKTR_CreateRenderPass( u32 numAttachments, u32 numSubPasses );
-void VKTR_SetRenderPassAttachment( VKTR_RenderPass renderPass, u32 attachment, VKTR_Image image, VKTR_Format format, int loadInput, int storeOutput );
+void VKTR_SetRenderPassAttachment( VKTR_RenderPass renderPass, u32 attachment, VKTR_Image image, int loadInput, int storeOutput, VKTR_ImageLayout srcLayout, VKTR_ImageLayout dstLayout );
 void VKTR_SetSubPassInput( VKTR_RenderPass renderPass, u32 subPass, u32 attachment, u32 binding );
 void VKTR_SetSubPassOutput( VKTR_RenderPass renderPass, u32 subPass, u32 attachment, u32 binding );
 void VKTR_SetSubPassDepthAttachment( VKTR_RenderPass renderPass, u32 subPass, u32 attachment );
 void VKTR_BuildRenderPass( VKTR_RenderPass renderPass );
 void VKTR_FreeRenderPass( VKTR_RenderPass renderPass );
 
-VKTR_Pipeline VKTR_CreatePipeline( VKTR_RenderPass renderPass, u32 subPass );
+VKTR_Pipeline VKTR_CreatePipeline( VKTR_RenderPass renderPass, u32 subPass, int numVertexBindings, int numDescriptorLayouts );
 //void VKTR_PipelineSetRenderTargets( VKTR_Pipeline pipeline, VKTR_Image* images, u32 numTargets );
 void VKTR_PipelineSetShader( VKTR_Pipeline pipeline, VKTR_ShaderStage stage, VKTR_Shader shader );
 void VKTR_PipelineSetDepthFunction( VKTR_Pipeline pipeline, VKTR_DepthFunction function );
 void VKTR_PipelineSetDepthEnable( VKTR_Pipeline pipeline, int test, int write );
 void VKTR_PipelineSetViewport( VKTR_Pipeline pipeline, float x, float y, float z, float width, float height, float depth );
 void VKTR_PipelineSetScissor( VKTR_Pipeline pipeline, u32 x, u32 y, u32 width, u32 height );
-void VKTR_PipelineSetBlend( VKTR_Pipeline pipeline, VKTR_BlendOp blendOp, VKTR_BlendFactor src, VKTR_BlendFactor dst );
+void VKTR_PipelineSetBlend( VKTR_Pipeline pipeline, u32 attachment, VKTR_BlendOp blendOp, VKTR_BlendFactor src, VKTR_BlendFactor dst );
 void VKTR_PipelineSetAlphaBlend( VKTR_Pipeline pipeline, VKTR_BlendOp blendOp, VKTR_BlendFactor src, VKTR_BlendFactor dst );
 void VKTR_PipelineSetBlendEnable( VKTR_Pipeline pipeline, u32 attachment, int enable );
 void VKTR_PipelineSetVertexBinding( VKTR_Pipeline pipeline, u32 binding, u32 offset, u32 stride, VKTR_Format format );
+void VKTR_PipelineSetDescriptorBinding( VKTR_Pipeline pipeline, u32 layoutIndex, u32 binding, VKTR_ShaderStage stage, VKTR_DescriptorType type, u32 count );
+void VKTR_PipelineSetImmutableSamplerBinding( VKTR_Pipeline pipeline, u32 layoutIndex, u32 binding, VKTR_ShaderStage stage, VKTR_Sampler sampler );
+void VKTR_PipelineSetPushConstRange( VKTR_Pipeline pipeline, int offset, int size, VKTR_ShaderStage stage );
 void VKTR_BuildPipeline( VKTR_Pipeline pipeline );
 void VKTR_FreePipeline( VKTR_Pipeline pipeline );
+
+VKTR_Sampler VKTR_CreateSampler( VKTR_FilterMode min, VKTR_FilterMode mag, VKTR_FilterMode mip, VKTR_WrapMode wrap, float maxAniso );
+
+VKTR_DescriptorPool VKTR_CreateDescriptorPool( u32 descriptorCount, u32 setCount, u32 inlineUniformBytes );
+VKTR_DescriptorSet VKTR_CreateDescriptorSet( VKTR_DescriptorPool pool, VKTR_Pipeline pipeline, int layoutIndex );
+void VKTR_ResetDescriptorPool( VKTR_DescriptorPool pool );
+void VKTR_SetTextureBinding( VKTR_DescriptorSet set, int binding, int element, VKTR_Image image );
+void VKTR_SetSamplerBinding( VKTR_DescriptorSet set, int binding, int element, VKTR_Sampler sampler );
+void VKTR_SetUniformBinding( VKTR_DescriptorSet set, int binding, int element, VKTR_Buffer buffer, int offset, int size );
+void VKTR_SetInlineUniformBinding( VKTR_DescriptorSet set, int binding, int size, void* data );
+void VKTR_SetInputAttachmentBinding( VKTR_DescriptorSet set, int binding, int element, VKTR_Image image );
 
 VKTR_CommandBuffer VKTR_CreateCommandBuffer( VKTR_QueueType type );
 void VKTR_StartRecording( VKTR_CommandBuffer buffer );
@@ -168,18 +213,23 @@ void VKTR_FreeCommandBuffer( VKTR_CommandBuffer buffer );
 void VKTR_Submit( VKTR_Queue queue, VKTR_CommandBuffer buffer, VKTR_Semaphore waitSemaphore, VKTR_Semaphore signalSemaphore );
 
 void VKTR_CMD_BindVertexBuffer( VKTR_CommandBuffer buffer, VKTR_Buffer vertexBuffer, int binding );
-void VKTR_CMD_DrawIndexed( VKTR_CommandBuffer buffer, VKTR_Buffer indexBuffer, VKTR_IndexType indexType, u32 count );
+void VKTR_CMD_BindIndexBuffer( VKTR_CommandBuffer buffer, VKTR_Buffer indexBuffer, VKTR_IndexType indexType );
+void VKTR_CMD_DrawIndexed( VKTR_CommandBuffer buffer, u32 count );
+void VKTR_CMD_DrawIndexedOffset( VKTR_CommandBuffer buffer, u32 offset, u32 count, u32 vertexOffset );
 void VKTR_CMD_Draw( VKTR_CommandBuffer buffer, u32 count );
+void VKTR_CMD_DrawOffset( VKTR_CommandBuffer buffer, u32 offset, u32 count );
 void VKTR_CMD_Copy( VKTR_CommandBuffer buffer, VKTR_Buffer src, u64 srcOffset, VKTR_Buffer dst, u64 dstOffset, u64 size );
+void VKTR_CMD_CopyToImage( VKTR_CommandBuffer buffer, VKTR_Buffer src, VKTR_Image dst );
 void VKTR_CMD_Blit( VKTR_CommandBuffer buffer, VKTR_Image src, VKTR_CopyRegion copyRegion, VKTR_Image dst, VKTR_CopyRegion dstRegion );
 void VKTR_CMD_Clear( VKTR_CommandBuffer buffer, u32 attachment, vec4 clearVal );
 void VKTR_CMD_ClearDepth( VKTR_CommandBuffer buffer, float clearVal );
 void VKTR_CMD_PushConst( VKTR_CommandBuffer buffer, VKTR_ShaderStage stage, u32 offset, u32 size, void* data );
-void VKTR_CMD_UpdateBuffer( VKTR_CommandBuffer buffer, u32 offset, u32 size, void* data );
+void VKTR_CMD_UpdateBuffer( VKTR_CommandBuffer buffer, VKTR_Buffer dst, u32 offset, u32 size, void* data );
 void VKTR_CMD_Dispatch( VKTR_CommandBuffer buffer, u32 x, u32 y, u32 z );
 void VKTR_CMD_BindPipeline( VKTR_CommandBuffer buffer, VKTR_Pipeline pipeline );
 void VKTR_CMD_StartRenderPass( VKTR_CommandBuffer buffer, VKTR_RenderPass renderPass );
 void VKTR_CMD_NextSubPass( VKTR_CommandBuffer buffer );
 void VKTR_CMD_EndRenderPass( VKTR_CommandBuffer buffer );
+void VKTR_CMD_BindDescriptorSet( VKTR_CommandBuffer buffer, VKTR_DescriptorSet set );
 
 #endif
