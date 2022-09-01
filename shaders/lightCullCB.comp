@@ -1,0 +1,232 @@
+#version 460 core
+
+#extension GL_KHR_shader_subgroup_ballot : require
+#extension GL_KHR_shader_subgroup_arithmetic : require
+#extension GL_KHR_shader_subgroup_vote : require
+#extension GL_EXT_scalar_block_layout : require
+#extension GL_EXT_samplerless_texture_functions : require
+
+#define FLT_MAX 3.402823466e+38
+
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+const uint tileThreads = gl_WorkGroupSize.x * gl_WorkGroupSize.y;
+const uint tileMaxLights = 15;
+
+layout(set = 0, binding = 0) uniform texture2DMS depthTex;
+layout(set = 0, binding = 1) uniform sampler s;
+
+layout(set = 0, binding = 2, std430) buffer tileBuf {
+	uint tileLights[];
+};
+
+layout(set = 0, binding = 3, std430) buffer lightBuf {
+	vec4 lights[];
+};
+
+layout(push_constant) uniform constants {
+	layout(offset =  0) vec3 camPos;
+	layout(offset = 12) uint numLights;
+	layout(offset = 16) vec3 forward;
+	layout(offset = 28) float ar;
+	layout(offset = 32) vec3 right;
+	layout(offset = 44) float scale;
+	layout(offset = 48) vec3 up; // could replace with 'cross( right, forward )'
+};
+
+float linearDepth( float z ) {
+	const float n = 0.1;
+	return ( n / z );
+}
+
+vec2 intersectRaySphere( vec3 rayOrigin, vec3 rayDir, vec3 centre, float radius ) {
+	vec3 oc = rayOrigin - centre;
+	float b = dot( oc, rayDir );
+	float c = dot( oc, oc ) - radius * radius;
+	float h = b * b - c;
+	if( h < 0 ) {
+		return vec2( -1 );
+	}
+	h = sqrt( h );
+	return vec2( -b - h, -b + h );
+}
+
+bool intersectAABBSphere( vec3 pos, vec3 size, vec3 centre, float radius ) {
+	vec3 delta = max( vec3( 0 ), abs( pos - centre ) - size );
+	float distSq = dot( delta, delta );
+	return distSq <= radius * radius;
+}
+
+shared uint workGroupMinZ, workGroupMaxZ;
+
+void main() {
+	// shared memory init
+	
+	if( gl_LocalInvocationIndex == 0 ) {
+		uint tileAddress = ( gl_WorkGroupID.y * gl_NumWorkGroups.x + gl_WorkGroupID.x ) * ( tileMaxLights + 1 );
+		tileLights[tileAddress] = 0;
+		
+		if( gl_SubgroupSize < tileThreads ) {
+			workGroupMinZ = 0xFFFFFFFF;
+			workGroupMaxZ = 0;
+		}
+	}
+	
+	// tile min/max Z
+	
+	ivec2 iUV = ivec2( gl_GlobalInvocationID.xy );
+	ivec2 tiUV = iUV;// / 2;
+	
+	float minLZ, maxLZ;
+	
+	bool pixelValid = tiUV.x < textureSize( depthTex ).x && tiUV.y < textureSize( depthTex ).y;
+	
+	if( gl_SubgroupSize >= tileThreads ) {
+		if( pixelValid ) {
+			float z1 = texelFetch( sampler2DMS( depthTex, s ), tiUV, 0 ).r;
+			float z2 = texelFetch( sampler2DMS( depthTex, s ), tiUV, 1 ).r;
+			float minZ = min( z1, z2 );
+			float maxZ = max( z1, z2 );
+			float waveMinZ = subgroupMin( minZ );
+			float waveMaxZ = subgroupMax( maxZ );
+			
+			minLZ = linearDepth( waveMinZ );
+			maxLZ = linearDepth( waveMaxZ );
+		}
+		
+		subgroupBarrier();
+		
+		//if( !pixelValid ) {
+			minLZ = subgroupBroadcast( minLZ, 0 );
+			maxLZ = subgroupBroadcast( maxLZ, 0 );
+		//}
+		
+	} else {
+		if( tiUV.x < textureSize( depthTex ).x && tiUV.y < textureSize( depthTex ).y ) {
+			if( pixelValid ) {
+				float z1 = texelFetch( sampler2DMS( depthTex, s ), tiUV, 0 ).r;
+				float z2 = texelFetch( sampler2DMS( depthTex, s ), tiUV, 1 ).r;
+				float minZ = min( z1, z2 );
+				float maxZ = max( z1, z2 );
+				float waveMinZ = subgroupMin( minZ );
+				float waveMaxZ = subgroupMax( maxZ );
+				
+				//if( gl_SubgroupInvocationID == 0 ) {
+				if( subgroupElect() ) {
+					atomicMin( workGroupMinZ, floatBitsToUint( waveMinZ ) );
+					atomicMax( workGroupMaxZ, floatBitsToUint( waveMaxZ ) );
+				}
+			}
+			
+			barrier();
+			
+			minLZ = linearDepth( uintBitsToFloat( workGroupMinZ ) );
+			maxLZ = linearDepth( uintBitsToFloat( workGroupMaxZ ) );
+		}
+	}
+	
+	float near = maxLZ;
+	float far = minLZ;
+	
+	// calculate tile frustum
+	//   distribute corners across subgroup?
+	
+	vec2 cornerOffsets[4] = {
+		vec2( 0, 0 ),
+		vec2( 0, 1 ),
+		vec2( 1, 0 ),
+		vec2( 1, 1 )
+	};
+	
+	//vec3 tileAABBMin = vec3( FLT_MAX );
+	//vec3 tileAABBMax = vec3( -FLT_MAX );
+	
+	uint i = gl_SubgroupInvocationID % 8;
+	//for( uint i = 0; i < 8; i++ ) {
+		vec2 screenPos = gl_WorkGroupID.xy * gl_WorkGroupSize.xy + cornerOffsets[i%4] * gl_WorkGroupSize.xy;
+		vec2 viewPos = ( ( screenPos / textureSize( depthTex ) ) * 2.0 - 1.0 ) * vec2( 1, -1 ) * vec2( scale * ar, scale );
+		float z = i < 4 ? near : far;
+		
+		vec3 pos = camPos + ( forward + right * viewPos.x + up * viewPos.y ) * z;
+		
+		//tileAABBMin = min( tileAABBMin, pos );
+		//tileAABBMax = max( tileAABBMax, pos );
+	//}
+	vec3 tileAABBMin = subgroupMin( pos );
+	vec3 tileAABBMax = subgroupMax( pos );
+	
+	vec3 tileAABBPos = ( tileAABBMin + tileAABBMax ) / 2;
+	vec3 tileAABBHalfSize = ( tileAABBMax - tileAABBMin ) / 2;
+	
+	// check light intersection
+	/*
+	vec2 tileCentrePos = gl_WorkGroupID.xy * gl_WorkGroupSize.xy + gl_WorkGroupSize.xy / 2;	
+	float u = ( tileCentrePos.x / textureSize( depthTex ).x ) * 2.0 - 1.0;
+	float v = ( tileCentrePos.y / textureSize( depthTex ).y ) * 2.0 - 1.0;
+	u = u * ar * scale;
+	v = v * scale * -1.0;
+	vec3 viewRay = normalize( forward + right * u + up * v );
+	*/
+	uint lightIndex = gl_LocalInvocationIndex;
+	
+	while( subgroupAny( lightIndex < numLights ) ) {
+		bool storeLight = false;
+		
+		if( lightIndex < numLights ) {
+			if( intersectAABBSphere( tileAABBPos, tileAABBHalfSize, lights[lightIndex].xyz, lights[lightIndex].w ) ) {
+				storeLight = true;
+			}
+			/*
+			// raycast tile centre
+			vec2 sphereHit = intersectRaySphere( camPos, viewRay, lights[lightIndex].xyz, lights[lightIndex].w );
+			
+			float lightMinZ = sphereHit[0];
+			float lightMaxZ = sphereHit[1];
+			
+			if( ( lightMaxZ > near && lightMinZ < far ) && lightMaxZ > 0 ) {
+			//if( ( lightMinZ <= far ) && lightMaxZ > 0 ) {
+				storeLight = true;
+			}
+			*/
+		}
+		
+		barrier();
+		
+		// update light list
+		
+		uvec4 storeBallot = subgroupBallot( storeLight );
+		
+		uint tileAddress = ( gl_WorkGroupID.y * gl_NumWorkGroups.x + gl_WorkGroupID.x ) * ( tileMaxLights + 1 );
+		
+		uint storeIndexBase;
+		
+		//if( gl_SubgroupInvocationID == 0 ) {
+		if( subgroupElect() ) {
+			uint numTileLights = subgroupBallotBitCount( storeBallot );
+			
+			if( gl_SubgroupSize >= tileThreads ) {
+				storeIndexBase = tileLights[tileAddress];
+				tileLights[tileAddress] += numTileLights;
+				
+			} else {
+				//storeIndexBase = atomicAdd( tileNumLights, numLights );
+				storeIndexBase = atomicAdd( tileLights[tileAddress], numTileLights );
+			}
+		}
+		
+		barrier();
+		
+		storeIndexBase = subgroupBroadcastFirst( storeIndexBase );
+		
+		if( storeLight ) {
+			//uint storeIndex = subgroupBroadcast( storeIndexBase, 0 ) + subgroupBallotExclusiveBitCount( storeBallot );
+			uint storeIndex = storeIndexBase + subgroupBallotExclusiveBitCount( storeBallot );
+			
+			if( storeIndex < tileMaxLights ) {
+				tileLights[tileAddress+1+storeIndex] = lightIndex;
+			}
+		}
+		
+		lightIndex += tileThreads;
+	}
+}

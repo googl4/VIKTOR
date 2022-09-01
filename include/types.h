@@ -15,6 +15,8 @@ typedef int32_t s32;
 typedef uint64_t u64;
 typedef int64_t s64;
 
+typedef unsigned int uint;
+
 typedef float vec2 __attribute__((vector_size(  8 )));
 typedef float vec4 __attribute__((vector_size( 16 )));
 typedef float vec3[3];

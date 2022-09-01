@@ -1,0 +1,73 @@
+#version 460 core
+
+layout(local_size_x = 8, local_size_y = 4, local_size_z = 1) in;
+
+layout(std430, push_constant) uniform constants {
+	vec4 camPos;
+	vec4 forward;
+	vec4 right;
+	vec4 up;
+	float ar;
+	float scale;
+	uint samples;
+	uvec2 res;
+	uint rngSeed;
+};
+
+layout(std430, binding = 0) buffer rayBuf {
+	vec4 rays[][2];
+};
+
+layout(std430, binding = 1) buffer dispatchBuf {
+	uvec3 dispatchSize;
+};
+
+uint rndState;
+
+uint xorshift( uint n ) {
+	n ^= n << 13;
+	n ^= n >> 17;
+	n ^= n << 5;
+	return n;
+}
+
+uint rnd() {
+	rndState = xorshift( rndState );
+	return rndState;
+}
+
+float frnd() {
+	uint f = 0x3F800000 | ( xorshift() >> 9 );
+	return ( uintBitsToFloat( f ) - 1.5f ) * 2.0f;
+}
+
+void main() {
+	bool pixelValid = gl_GlobalInvocationID.x < res.x && gl_GlobalInvocationID.y < res.y;
+	
+	rndState = rngSeed + ( gl_GlobalInvocationID.y * gl_NumWorkGroups.x * gl_WorkGroupSize.x + gl_GlobalInvocationID.x );
+	rnd();
+	
+	vec2 uv = ( ( vec2( gl_GlobalInvocationID.xy ) + 0.5 ) / res ) * 2.0 - 1.0;
+	
+	for( uint i = 0; i < samples; i++ ) {
+		vec2 uv2 = uv + vec2( frnd(), frnd() ) / res;
+		uv2 *= vec2( ar * scale, scale );
+		vec3 viewRay = normalize( forward.xyz + right.xyz * uv2.x + up.xyz * uv2.y );
+		
+		uint baseIndex;
+		uvec4 storeBallot = subgroupBallot( pixelValid );
+		
+		if( subGroupElect() ) {
+			uint pcount = subgroupBallotBitCount( storeBallot );
+			baseIndex = atomicAdd( dispatchSize.x, pcount );
+		}
+		
+		baseIndex = subgroupBroadcastFirst( baseIndex );
+		
+		if( pixelValid ) {
+			uint storeIndex = baseIndex + subgroupBallotExclusiveBitCount( storeBallot );
+			rays[baseIndex][0] = camPos;
+			rays[baseIndex][1] = viewRay;
+		}
+	}
+}

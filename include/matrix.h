@@ -5,6 +5,10 @@
 
 #include "types.h"
 
+static inline float vec2_length( vec2 v ) {
+	return sqrtf( v[0] * v[0] + v[1] * v[1] );
+}
+
 static inline float vec4_dot( vec4 a, vec4 b ) {
 	float n = 0;
 	
@@ -41,6 +45,26 @@ static inline vec4 vec4_reflect( vec4 v, vec4 n ) {
 	
 	for( int i = 0; i < 4; i++ ) {
 		r[i] = v[i] - p * n[i];
+	}
+	
+	return r;
+}
+
+static inline vec4 vec4_min( vec4 a, vec4 b ) {
+	vec4 r;
+	
+	for( int i = 0; i < 4; i++ ) {
+		r[i] = fminf( a[i], b[i] );
+	}
+	
+	return r;
+}
+
+static inline vec4 vec4_max( vec4 a, vec4 b ) {
+	vec4 r;
+	
+	for( int i = 0; i < 4; i++ ) {
+		r[i] = fmaxf( a[i], b[i] );
 	}
 	
 	return r;
@@ -143,6 +167,67 @@ static inline mat4 mat4_translate_in_place( mat4 m, vec4 t ) {
 		vec4 r = mat4_row( m, i );
 		m.c[3][i] += vec4_dot( r, t );
 	}
+	
+	return m;
+}
+
+static inline mat4 mat4_invert( mat4 m ) {
+	mat4 t;
+	
+	float s[6];
+	float c[6];
+	s[0] = m.c[0][0] * m.c[1][1] - m.c[1][0] * m.c[0][1];
+	s[1] = m.c[0][0] * m.c[1][2] - m.c[1][0] * m.c[0][2];
+	s[2] = m.c[0][0] * m.c[1][3] - m.c[1][0] * m.c[0][3];
+	s[3] = m.c[0][1] * m.c[1][2] - m.c[1][1] * m.c[0][2];
+	s[4] = m.c[0][1] * m.c[1][3] - m.c[1][1] * m.c[0][3];
+	s[5] = m.c[0][2] * m.c[1][3] - m.c[1][2] * m.c[0][3];
+
+	c[0] = m.c[2][0] * m.c[3][1] - m.c[3][0] * m.c[2][1];
+	c[1] = m.c[2][0] * m.c[3][2] - m.c[3][0] * m.c[2][2];
+	c[2] = m.c[2][0] * m.c[3][3] - m.c[3][0] * m.c[2][3];
+	c[3] = m.c[2][1] * m.c[3][2] - m.c[3][1] * m.c[2][2];
+	c[4] = m.c[2][1] * m.c[3][3] - m.c[3][1] * m.c[2][3];
+	c[5] = m.c[2][2] * m.c[3][3] - m.c[3][2] * m.c[2][3];
+	
+	float idet = 1.0f / ( s[0] * c[5] - s[1] * c[4] + s[2] * c[3] + s[3] * c[2] - s[4] * c[1] + s[5] * c[0] );
+	
+	t.c[0][0] = (  m.c[1][1] * c[5] - m.c[1][2] * c[4] + m.c[1][3] * c[3] ) * idet;
+	t.c[0][1] = ( -m.c[0][1] * c[5] + m.c[0][2] * c[4] - m.c[0][3] * c[3] ) * idet;
+	t.c[0][2] = (  m.c[3][1] * s[5] - m.c[3][2] * s[4] + m.c[3][3] * s[3] ) * idet;
+	t.c[0][3] = ( -m.c[2][1] * s[5] + m.c[2][2] * s[4] - m.c[2][3] * s[3] ) * idet;
+
+	t.c[1][0] = ( -m.c[1][0] * c[5] + m.c[1][2] * c[2] - m.c[1][3] * c[1] ) * idet;
+	t.c[1][1] = (  m.c[0][0] * c[5] - m.c[0][2] * c[2] + m.c[0][3] * c[1] ) * idet;
+	t.c[1][2] = ( -m.c[3][0] * s[5] + m.c[3][2] * s[2] - m.c[3][3] * s[1] ) * idet;
+	t.c[1][3] = (  m.c[2][0] * s[5] - m.c[2][2] * s[2] + m.c[2][3] * s[1] ) * idet;
+
+	t.c[2][0] = (  m.c[1][0] * c[4] - m.c[1][1] * c[2] + m.c[1][3] * c[0] ) * idet;
+	t.c[2][1] = ( -m.c[0][0] * c[4] + m.c[0][1] * c[2] - m.c[0][3] * c[0] ) * idet;
+	t.c[2][2] = (  m.c[3][0] * s[4] - m.c[3][1] * s[2] + m.c[3][3] * s[0] ) * idet;
+	t.c[2][3] = ( -m.c[2][0] * s[4] + m.c[2][1] * s[2] - m.c[2][3] * s[0] ) * idet;
+
+	t.c[3][0] = ( -m.c[1][0] * c[3] + m.c[1][1] * c[1] - m.c[1][2] * c[0] ) * idet;
+	t.c[3][1] = (  m.c[0][0] * c[3] - m.c[0][1] * c[1] + m.c[0][2] * c[0] ) * idet;
+	t.c[3][2] = ( -m.c[3][0] * s[3] + m.c[3][1] * s[1] - m.c[3][2] * s[0] ) * idet;
+	t.c[3][3] = (  m.c[2][0] * s[3] - m.c[2][1] * s[1] + m.c[2][2] * s[0] ) * idet;
+	
+	return t;
+}
+
+static inline mat4 mat4_ortho( float l, float r, float b, float t, float n, float f ) {
+	mat4 m = {};
+	
+	m.c[0][0] = 2.0f / ( r - l );
+
+	m.c[1][1] = 2.0f / ( t - b );
+
+	m.c[2][2] = 1.0f / ( f - n );
+	
+	m.c[3][0] = -( r + l ) / ( r - l );
+	m.c[3][1] = -( t + b ) / ( t - b );
+	m.c[3][2] = -( n ) / ( f - n );
+	m.c[3][3] = 1.0f;
 	
 	return m;
 }

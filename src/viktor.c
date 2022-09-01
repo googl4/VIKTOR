@@ -38,12 +38,75 @@ VkDescriptorType descriptorMap[] = {
 	VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
 	VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
 	VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT,
-	VK_DESCRIPTOR_TYPE_INLINE_UNIFORM_BLOCK_EXT
+	VK_DESCRIPTOR_TYPE_INLINE_UNIFORM_BLOCK_EXT,
+	VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
+	VK_DESCRIPTOR_TYPE_STORAGE_BUFFER
 };
 
 VkIndexType indexMap[] = {
 	VK_INDEX_TYPE_UINT16,
 	VK_INDEX_TYPE_UINT32
+};
+
+VkImageLayout imageLayoutMap[] = {
+	VK_IMAGE_LAYOUT_UNDEFINED,
+	VK_IMAGE_LAYOUT_GENERAL,
+	VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+	VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+	VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL,
+	VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+	VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+	VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+	VK_IMAGE_LAYOUT_PRESENT_SRC_KHR
+};
+
+VkFilter filterMap[] = {
+	VK_FILTER_NEAREST,
+	VK_FILTER_LINEAR
+};
+
+VkSamplerMipmapMode mipFilterMap[] = {
+	VK_SAMPLER_MIPMAP_MODE_NEAREST,
+	VK_SAMPLER_MIPMAP_MODE_LINEAR
+};
+
+VkSamplerAddressMode wrapMap[] = {
+	VK_SAMPLER_ADDRESS_MODE_REPEAT,
+	VK_SAMPLER_ADDRESS_MODE_MIRRORED_REPEAT,
+	VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+	VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER
+};
+
+VkCompareOp depthFnMap[] = {
+	VK_COMPARE_OP_LESS,
+	VK_COMPARE_OP_LESS_OR_EQUAL,
+	VK_COMPARE_OP_EQUAL,
+	VK_COMPARE_OP_NOT_EQUAL,
+	VK_COMPARE_OP_GREATER_OR_EQUAL,
+	VK_COMPARE_OP_GREATER,
+	VK_COMPARE_OP_ALWAYS,
+	VK_COMPARE_OP_NEVER
+};
+
+VkBlendOp blendOpMap[] = {
+	VK_BLEND_OP_ADD,
+	VK_BLEND_OP_SUBTRACT,
+	VK_BLEND_OP_REVERSE_SUBTRACT,
+	VK_BLEND_OP_MIN,
+	VK_BLEND_OP_MAX 
+};
+
+VkBlendFactor blendFactorMap[] = {
+	VK_BLEND_FACTOR_ZERO,
+	VK_BLEND_FACTOR_ONE,
+	VK_BLEND_FACTOR_SRC_ALPHA,
+	VK_BLEND_FACTOR_DST_ALPHA,
+	VK_BLEND_FACTOR_SRC_COLOR,
+	VK_BLEND_FACTOR_DST_COLOR,
+	VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA,
+	VK_BLEND_FACTOR_ONE_MINUS_DST_ALPHA,
+	VK_BLEND_FACTOR_ONE_MINUS_SRC_COLOR,
+	VK_BLEND_FACTOR_ONE_MINUS_DST_COLOR
 };
 
 // TODO replace malloc
@@ -68,11 +131,19 @@ typedef struct {
 	u32 subPassDepth[8];
 	int subPassAttachmentCounts[8];
 	VkRenderPass vkRenderPass;
+	//VkImageView vkFBImageViews[8];
+	//VkFramebuffer vkFramebuffer;
+	//int FBWidth;
+	//int FBHeight;
+} VKTR_Internal_RenderPass;
+
+typedef struct {
+	VKTR_Internal_RenderPass* renderPass;
 	VkImageView vkFBImageViews[8];
 	VkFramebuffer vkFramebuffer;
-	int FBWidth;
-	int FBHeight;
-} VKTR_Internal_RenderPass;
+	int width;
+	int height;
+} VKTR_Internal_FrameBuffer;
 
 typedef struct {
 	VKTR_Internal_RenderPass* renderPass;
@@ -91,11 +162,15 @@ typedef struct {
 	VkPipelineColorBlendAttachmentState colourBlendAttachments[8];
 	VkPipelineColorBlendStateCreateInfo colourBlending;
 	VkPipelineDepthStencilStateCreateInfo depthState;
+	VkPipelineDynamicStateCreateInfo dynamicState;
+	VkDynamicState dynamicStates[2];
 	VkPushConstantRange pushConsts[4];
 	VkPipelineLayoutCreateInfo pipelineLayoutCreateInfo;
 	VkPipelineLayout pipelineLayout;
 	VkDescriptorSetLayoutBinding descriptorLayoutBindings[8][8];
+	VkDescriptorBindingFlagsEXT descriptorLayoutBindingFlags[8][8];
     VkDescriptorSetLayoutCreateInfo descriptorLayoutInfo[8];
+    VkDescriptorSetLayoutBindingFlagsCreateInfo descriptorLayoutFlagInfo[8];
     VkDescriptorSetLayout descriptorLayouts[8];
     int numDescriptorLayouts;
 	VkPipeline pipeline;
@@ -114,7 +189,7 @@ typedef struct {
 	size_t memorySize;
 	VkImageView defaultView;
 	VKTR_Format format;
-	int w, h;
+	int w, h, samples, layers;
 } VKTR_Internal_Image;
 
 
@@ -152,9 +227,12 @@ void registerDebugCallback( VkInstance instance ) {
 }
 
 void createDevice( VkInstance instance, VkPhysicalDevice* physicalDevice, VkDevice* device ) {
-	const char* deviceExtensions[2] = {
+	const char* deviceExtensions[4] = {
 		"VK_KHR_swapchain",
 		"VK_EXT_inline_uniform_block",
+		//"VK_EXT_subgroup_size_control",
+		"VK_EXT_descriptor_indexing",
+		"VK_KHR_16bit_storage"
 		//"VK_KHR_multiview",
 		//"VK_NV_viewport_array2",
 		//"VK_NVX_multiview_per_view_attributes",
@@ -200,7 +278,7 @@ void createDevice( VkInstance instance, VkPhysicalDevice* physicalDevice, VkDevi
 	printf( "has async compute? %d\n", computeQueueFamily >= 0 );
 	printf( "has async transfer? %d\n", transferQueueFamily >= 0 );
 	
-	float queuePriority = 1.0f;
+	float queuePriority[3] = { 1.0f, 0.9f, 0.8f };
 	
 	VkDeviceQueueCreateInfo queueCreateInfo[3];
 	memset( queueCreateInfo, 0, 3 * sizeof( VkDeviceQueueCreateInfo ) );
@@ -208,7 +286,7 @@ void createDevice( VkInstance instance, VkPhysicalDevice* physicalDevice, VkDevi
 	queueCreateInfo[0].sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
 	queueCreateInfo[0].queueFamilyIndex = graphicsQueueFamily;
 	queueCreateInfo[0].queueCount = 1;
-	queueCreateInfo[0].pQueuePriorities = &queuePriority;
+	queueCreateInfo[0].pQueuePriorities = &queuePriority[0];
 	
 	int nQueues = 1;
 	
@@ -216,7 +294,7 @@ void createDevice( VkInstance instance, VkPhysicalDevice* physicalDevice, VkDevi
 		queueCreateInfo[nQueues].sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
 		queueCreateInfo[nQueues].queueFamilyIndex = computeQueueFamily;
 		queueCreateInfo[nQueues].queueCount = 1;
-		queueCreateInfo[nQueues].pQueuePriorities = &queuePriority;
+		queueCreateInfo[nQueues].pQueuePriorities = &queuePriority[1];
 		nQueues++;
 	}
 	
@@ -224,18 +302,41 @@ void createDevice( VkInstance instance, VkPhysicalDevice* physicalDevice, VkDevi
 		queueCreateInfo[nQueues].sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
 		queueCreateInfo[nQueues].queueFamilyIndex = transferQueueFamily;
 		queueCreateInfo[nQueues].queueCount = 1;
-		queueCreateInfo[nQueues].pQueuePriorities = &queuePriority;
+		queueCreateInfo[nQueues].pQueuePriorities = &queuePriority[2];
 		nQueues++;
 	}
 	
 	VkPhysicalDeviceFeatures deviceFeatures = {};
+	deviceFeatures.sampleRateShading = VK_TRUE;
+	deviceFeatures.samplerAnisotropy = VK_TRUE;
+	deviceFeatures.fragmentStoresAndAtomics = VK_TRUE;
+	deviceFeatures.textureCompressionBC = VK_TRUE;
+	deviceFeatures.shaderStorageImageMultisample = VK_TRUE;
+	deviceFeatures.depthClamp = VK_TRUE;
+	deviceFeatures.depthBiasClamp = VK_TRUE;
+	deviceFeatures.vertexPipelineStoresAndAtomics = VK_TRUE;
+	
+	VkPhysicalDevice16BitStorageFeatures storageFeatures = {};
+	storageFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_16BIT_STORAGE_FEATURES;
+	storageFeatures.storageBuffer16BitAccess = VK_TRUE;
+	
+	VkPhysicalDeviceDescriptorIndexingFeaturesEXT descriptorIndexingFeatures = {};
+	descriptorIndexingFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_INDEXING_FEATURES_EXT;
+	descriptorIndexingFeatures.pNext = &storageFeatures;
+	descriptorIndexingFeatures.shaderSampledImageArrayNonUniformIndexing = VK_TRUE;
+	descriptorIndexingFeatures.descriptorBindingSampledImageUpdateAfterBind = VK_TRUE;
+	descriptorIndexingFeatures.descriptorBindingUpdateUnusedWhilePending = VK_TRUE;
+	descriptorIndexingFeatures.descriptorBindingPartiallyBound = VK_TRUE;
+	descriptorIndexingFeatures.descriptorBindingVariableDescriptorCount = VK_TRUE;
+	descriptorIndexingFeatures.runtimeDescriptorArray = VK_TRUE;
 	
 	VkDeviceCreateInfo deviceCreateInfo = {};
 	deviceCreateInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
+	deviceCreateInfo.pNext = &descriptorIndexingFeatures;
 	deviceCreateInfo.pQueueCreateInfos = queueCreateInfo;
 	deviceCreateInfo.queueCreateInfoCount = nQueues;
 	deviceCreateInfo.pEnabledFeatures = &deviceFeatures;
-	deviceCreateInfo.enabledExtensionCount = 2;
+	deviceCreateInfo.enabledExtensionCount = 4;
 	deviceCreateInfo.ppEnabledExtensionNames = deviceExtensions;
 	deviceCreateInfo.enabledLayerCount = 1;
 	deviceCreateInfo.ppEnabledLayerNames = deviceLayers;
@@ -258,8 +359,8 @@ void VKTR_Init( const char* appName ) {
 	const char* instanceExtensions[4] = {
 		"VK_KHR_surface",
 		"VK_KHR_win32_surface",
-		//"VK_EXT_debug_report",
-		"VK_EXT_debug_utils"
+		"VK_EXT_debug_utils",
+		"VK_EXT_validation_features"
 	};
 
 	const char* instanceLayers[1] = {
@@ -274,12 +375,19 @@ void VKTR_Init( const char* appName ) {
 	appInfo.applicationVersion = VK_MAKE_VERSION( 1, 0, 0 );
 	appInfo.pEngineName = "VIKTOR";
 	appInfo.engineVersion = VK_MAKE_VERSION( 1, 0, 0 );
-	appInfo.apiVersion = VK_API_VERSION_1_2;
+	appInfo.apiVersion = VK_API_VERSION_1_1;
+	
+	VkValidationFeatureEnableEXT validationEnables[] = { VK_VALIDATION_FEATURE_ENABLE_GPU_ASSISTED_EXT, VK_VALIDATION_FEATURE_ENABLE_GPU_ASSISTED_RESERVE_BINDING_SLOT_EXT, VK_VALIDATION_FEATURE_ENABLE_BEST_PRACTICES_EXT, VK_VALIDATION_FEATURE_ENABLE_SYNCHRONIZATION_VALIDATION_EXT };
+	VkValidationFeaturesEXT validationFeatures = {};
+	validationFeatures.sType = VK_STRUCTURE_TYPE_VALIDATION_FEATURES_EXT;
+	validationFeatures.enabledValidationFeatureCount = 4;
+	validationFeatures.pEnabledValidationFeatures = validationEnables;
 	
 	VkInstanceCreateInfo createInfo = {};
 	createInfo.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
+	createInfo.pNext = &validationFeatures;
 	createInfo.pApplicationInfo = &appInfo;
-	createInfo.enabledExtensionCount = 3;//4;
+	createInfo.enabledExtensionCount = 4;
 	createInfo.ppEnabledExtensionNames = instanceExtensions;
 	createInfo.enabledLayerCount = 1;
 	createInfo.ppEnabledLayerNames = instanceLayers;
@@ -341,11 +449,11 @@ LRESULT CALLBACK WndProc( HWND hWnd,UINT uMsg, WPARAM wParam, LPARAM lParam ) {
 	return DefWindowProc( hWnd, uMsg, wParam, lParam );
 }
 
-void createImageView( VkDevice device, VkImageView* view, VkImage image, VkFormat format, VkImageAspectFlagBits aspectBits ) {
+void createImageView( VkDevice device, VkImageView* view, VkImage image, VkFormat format, VkImageAspectFlagBits aspectBits, int baseLayer, int layers ) {
 	VkImageViewCreateInfo viewCreateInfo = {};
 	viewCreateInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
 	viewCreateInfo.image = image;
-	viewCreateInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+	viewCreateInfo.viewType = layers > 1 ? VK_IMAGE_VIEW_TYPE_2D_ARRAY : VK_IMAGE_VIEW_TYPE_2D;
 	viewCreateInfo.format = format;
 	viewCreateInfo.components.r = VK_COMPONENT_SWIZZLE_IDENTITY;
 	viewCreateInfo.components.g = VK_COMPONENT_SWIZZLE_IDENTITY;
@@ -354,8 +462,8 @@ void createImageView( VkDevice device, VkImageView* view, VkImage image, VkForma
 	viewCreateInfo.subresourceRange.aspectMask = aspectBits;
 	viewCreateInfo.subresourceRange.baseMipLevel = 0;
 	viewCreateInfo.subresourceRange.levelCount = 1;
-	viewCreateInfo.subresourceRange.baseArrayLayer = 0;
-	viewCreateInfo.subresourceRange.layerCount = 1;
+	viewCreateInfo.subresourceRange.baseArrayLayer = baseLayer;
+	viewCreateInfo.subresourceRange.layerCount = layers;
 	vkCreateImageView( device, &viewCreateInfo, NULL, view );
 }
 
@@ -438,7 +546,7 @@ VKTR_Window VKTR_CreateWindow( u32 width, u32 height, const char* title, VKTR_Wi
 	
 	VkImageView* swapchainImageViews = malloc( numSwapchainImages * sizeof( VkImageView ) );
 	for( int i = 0; i < numSwapchainImages; i++ ) {
-		createImageView( device, &swapchainImageViews[i], swapchainImages[i], VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_ASPECT_COLOR_BIT );
+		createImageView( device, &swapchainImageViews[i], swapchainImages[i], VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_ASPECT_COLOR_BIT, 0, 1 );
 	}
 	
 	VKTR_Internal_Window* window = malloc( sizeof( VKTR_Internal_Window ) );
@@ -477,11 +585,11 @@ void VKTR_Update( VKTR_Queue queue, VKTR_Window window, VKTR_Semaphore waitSemap
 	presentInfo.pSwapchains = &win->swapchain;
 	presentInfo.pImageIndices = &win->imageIndex;
 	
-	//vkQueueWaitIdle( queue );
+	vkQueueWaitIdle( queue );
 	
 	vkQueuePresentKHR( queue, &presentInfo );
 	
-	//vkQueueWaitIdle( queue );
+	vkQueueWaitIdle( queue );
 }
 
 int VKTR_GetSwapchainLength( VKTR_Window window ) {
@@ -501,6 +609,8 @@ VKTR_Image VKTR_GetSwapchainImage( VKTR_Window window, u32 n ) {
 	img->format = VKTR_FORMAT_RGBA8_SRGB;
 	img->w = win->w;
 	img->h = win->h;
+	img->samples = 1;
+	img->layers = 1;
 	
 	return img;
 }
@@ -509,8 +619,6 @@ u32 VKTR_GetNextImage( VKTR_Window window, VKTR_Semaphore availableSemaphore ) {
 	VKTR_Internal_Window* win = window;
 	
 	vkAcquireNextImageKHR( device, win->swapchain, UINT64_MAX, availableSemaphore, VK_NULL_HANDLE, &win->imageIndex );
-	
-	//vkDeviceWaitIdle( device );
 	
 	return win->imageIndex;
 }
@@ -527,16 +635,35 @@ VKTR_Semaphore VKTR_CreateSemaphore( void ) {
 
 //void VKTR_DestroySemaphore( VKTR_Semaphore semaphore );
 
+VKTR_Fence VKTR_CreateFence( int createSignalled ) {
+	VkFenceCreateInfo fenceInfo = {};
+	fenceInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+	fenceInfo.flags = createSignalled ? VK_FENCE_CREATE_SIGNALED_BIT : 0;
+	
+	VkFence fence;
+	vkCreateFence( device, &fenceInfo, NULL, &fence );
+	
+	return fence;
+}
+
+void VKTR_WaitFence( VKTR_Fence fence, u64 timeoutNS ) {
+	vkWaitForFences( device, 1, (VkFence*)&fence, VK_TRUE, timeoutNS );
+}
+
+void VKTR_ResetFence( VKTR_Fence fence ) {
+	vkResetFences( device, 1, (VkFence*)&fence );
+}
+
 VKTR_Buffer VKTR_CreateBuffer( u64 size, VKTR_BufferType type ) {
 	VKTR_Internal_Buffer* buf = malloc( sizeof( VKTR_Internal_Buffer ) );
 	
 	VkBufferUsageFlagBits usageFlags[] = {
-		VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, 	//VKTR_BUFFERTYPE_DEVICE_GENERIC,
-		VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, 	//VKTR_BUFFERTYPE_DEVICE_VERTEX,
-		VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, 	//VKTR_BUFFERTYPE_DEVICE_INDEX,
-		VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, 	//VKTR_BUFFERTYPE_DEVICE_UNIFORM,
-		VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, 	//VKTR_BUFFERTYPE_HOST,
-		VK_BUFFER_USAGE_TRANSFER_SRC_BIT, 										//VKTR_BUFFERTYPE_STAGING
+		VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, // VKTR_BUFFERTYPE_DEVICE_GENERIC,
+		VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, 	// VKTR_BUFFERTYPE_DEVICE_VERTEX,
+		VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, 	// VKTR_BUFFERTYPE_DEVICE_INDEX,
+		VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,  // VKTR_BUFFERTYPE_DEVICE_UNIFORM,
+		VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, 	// VKTR_BUFFERTYPE_HOST,
+		VK_BUFFER_USAGE_TRANSFER_SRC_BIT, 										// VKTR_BUFFERTYPE_STAGING
 	};
 	
 	VkBufferCreateInfo bufferInfo = {};
@@ -580,7 +707,19 @@ void* VKTR_MapBuffer( VKTR_Buffer buffer ) {
 	return data;
 }
 
-VKTR_Image VKTR_CreateImage( u32 width, u32 height, VKTR_Format type, VKTR_ImageFlags flags ) {
+void VKTR_FlushBuffer( VKTR_Buffer buffer, u64 offset, u64 size ) {
+	VKTR_Internal_Buffer* buf = buffer;
+	
+	VkMappedMemoryRange range = {};
+	range.sType = VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE;
+	range.memory = buf->memory;
+	range.offset = offset;
+	range.size = size;
+	
+	vkFlushMappedMemoryRanges( device, 1, &range );
+}
+
+VKTR_Image VKTR_CreateImage( u32 width, u32 height, VKTR_Format type, VKTR_ImageFlags flags, int layers ) {
 	VKTR_Internal_Image* img = malloc( sizeof( VKTR_Internal_Image ) );
 	
 	VkImageCreateInfo imageInfo = {};
@@ -590,7 +729,7 @@ VKTR_Image VKTR_CreateImage( u32 width, u32 height, VKTR_Format type, VKTR_Image
 	imageInfo.extent.height = height;
 	imageInfo.extent.depth = 1;
 	imageInfo.mipLevels = 1;
-	imageInfo.arrayLayers = 1;
+	imageInfo.arrayLayers = layers;
 	imageInfo.format = formatMap[type];
 	imageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
 	imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
@@ -599,11 +738,28 @@ VKTR_Image VKTR_CreateImage( u32 width, u32 height, VKTR_Format type, VKTR_Image
 	imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
 	imageInfo.flags = 0;
 	
-	imageInfo.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+	img->samples = 1;
+	if( flags & VKTR_IMAGEFLAG_MULTISAMPLE_2X ) {
+		img->samples = 2;
+		imageInfo.samples = VK_SAMPLE_COUNT_2_BIT;
+	}
+	if( flags & VKTR_IMAGEFLAG_MULTISAMPLE_4X ) {
+		img->samples = 4;
+		imageInfo.samples = VK_SAMPLE_COUNT_4_BIT;
+	}
+	if( flags & VKTR_IMAGEFLAG_MULTISAMPLE_8X ) {
+		img->samples = 8;
+		imageInfo.samples = VK_SAMPLE_COUNT_8_BIT;
+	}
+	
+	imageInfo.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;// | VK_IMAGE_USAGE_STORAGE_BIT;
 	
 	if( flags & VKTR_IMAGEFLAG_RENDERTARGET ) {
+		imageInfo.usage &= ~VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+		
 		if( type == VKTR_FORMAT_D32F ) {
 			imageInfo.usage |= VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
+			
 		} else {
 			imageInfo.usage |= VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
 		}
@@ -629,13 +785,30 @@ VKTR_Image VKTR_CreateImage( u32 width, u32 height, VKTR_Format type, VKTR_Image
     
     img->memorySize = allocInfo.allocationSize;
     
-    createImageView( device, &img->defaultView, img->tex, formatMap[type], type == VKTR_FORMAT_D32F ? VK_IMAGE_ASPECT_DEPTH_BIT : VK_IMAGE_ASPECT_COLOR_BIT );
+    createImageView( device, &img->defaultView, img->tex, formatMap[type], type == VKTR_FORMAT_D32F ? VK_IMAGE_ASPECT_DEPTH_BIT : VK_IMAGE_ASPECT_COLOR_BIT, 0, layers );
     
     img->format = type;
     img->w = width;
     img->h = height;
+    img->layers = layers;
     
     return img;
+}
+
+VKTR_Image VKTR_CreateImageView( VKTR_Image baseImage, VKTR_Format type, int layer ) {
+	VKTR_Internal_Image* img = baseImage;
+	
+	VKTR_Internal_Image* imgView = calloc( sizeof( VKTR_Internal_Image ), 1 );
+	
+	imgView->samples = img->samples;
+	imgView->format = type;
+	imgView->w = img->w;
+	imgView->h = img->h;
+	imgView->layers = 1;
+	
+	createImageView( device, &imgView->defaultView, img->tex, formatMap[type], type == VKTR_FORMAT_D32F ? VK_IMAGE_ASPECT_DEPTH_BIT : VK_IMAGE_ASPECT_COLOR_BIT, layer, 1 );
+	
+	return imgView;
 }
 
 //VKTR_Buffer VKTR_GetImageBuffer( VKTR_Image image )
@@ -654,22 +827,30 @@ VKTR_Shader VKTR_LoadShader( const void* data, u64 dataSize ) {
 }
 
 VKTR_CommandPool VKTR_CreateCommandPool( VKTR_QueueType queueType ) {
-	int queues[3] = {
+	int queueFamiles[3] = {
 		graphicsQueueFamily,
 		computeQueueFamily,
 		transferQueueFamily
 	};
 	
-	if( queues[type] < 0 ) {
-		type = VKTR_QUEUETYPE_GRAPHICS;
+	if( queueFamiles[queueType] < 0 ) {
+		queueType = VKTR_QUEUETYPE_GRAPHICS;
 	}
 	
 	VkCommandPoolCreateInfo poolInfo = {};
 	poolInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
-	poolInfo.queueFamilyIndex = type;
+	poolInfo.queueFamilyIndex = queueFamiles[queueType];
 	poolInfo.flags = 0;//VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
 	
-	vkCreateCommandPool( device, &poolInfo, NULL, &commandPools[queueType] );
+	//vkCreateCommandPool( device, &poolInfo, NULL, &commandPools[queueType] );
+	VkCommandPool cmdPool;
+	vkCreateCommandPool( device, &poolInfo, NULL, &cmdPool );
+	
+	return cmdPool;
+}
+
+void VKTR_ResetCommandPool( VKTR_CommandPool pool ) {
+	vkResetCommandPool( device, pool, 0 );
 }
 
 VKTR_CommandBuffer VKTR_CreateCommandBuffer( VKTR_CommandPool pool ) {
@@ -690,7 +871,8 @@ void VKTR_StartRecording( VKTR_CommandBuffer buffer ) {
 	VkCommandBufferBeginInfo beginInfo = {};
 	beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
 	//beginInfo.flags = VK_COMMAND_BUFFER_USAGE_SIMULTANEOUS_USE_BIT;
-	beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+	//beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+	beginInfo.flags = 0;
 		
 	vkBeginCommandBuffer( buffer, &beginInfo );
 }
@@ -699,19 +881,31 @@ void VKTR_EndRecording( VKTR_CommandBuffer buffer ) {
 	vkEndCommandBuffer( buffer );
 }
 
-void VKTR_Submit( VKTR_Queue queue, VKTR_CommandBuffer buffer, VKTR_Semaphore waitSemaphore, VKTR_Semaphore signalSemaphore ) {
+void VKTR_Submit( VKTR_Queue queue, VKTR_CommandBuffer buffer, int waitCount, VKTR_Semaphore* waitSemaphores, int signalCount, VKTR_Semaphore* signalSemaphores, VKTR_Fence signalFence ) {
 	VkSubmitInfo submitInfo = {};
 	submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-	submitInfo.waitSemaphoreCount = waitSemaphore != VKTR_INVALID_HANDLE;
-	submitInfo.pWaitSemaphores = (VkSemaphore*)&waitSemaphore;
-	VkPipelineStageFlags waitStages = VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT;
-	submitInfo.pWaitDstStageMask = &waitStages;
+	submitInfo.waitSemaphoreCount = waitCount;
+	submitInfo.pWaitSemaphores = (VkSemaphore*)waitSemaphores;
+	VkPipelineStageFlags waitStages[waitCount];
+	for( int i = 0; i < waitCount; i++ ) {
+		waitStages[i] = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
+	}
+	submitInfo.pWaitDstStageMask = waitStages;
 	submitInfo.commandBufferCount = 1;
 	submitInfo.pCommandBuffers = (VkCommandBuffer*)&buffer;
-	submitInfo.signalSemaphoreCount = signalSemaphore != VKTR_INVALID_HANDLE;
-	submitInfo.pSignalSemaphores = (VkSemaphore*)&signalSemaphore;
+	submitInfo.signalSemaphoreCount = signalCount;
+	submitInfo.pSignalSemaphores = (VkSemaphore*)signalSemaphores;
 	
-	vkQueueSubmit( queue, 1, &submitInfo, VK_NULL_HANDLE );
+	VkFence fence = VK_NULL_HANDLE;
+	
+	if( signalFence != VKTR_INVALID_HANDLE ) {
+		fence = signalFence;
+	}
+	
+	vkQueueSubmit( queue, 1, &submitInfo, fence );
+	
+	//vkQueueWaitIdle( queue );
+	//vkDeviceWaitIdle( device );
 }
 
 VKTR_RenderPass VKTR_CreateRenderPass( u32 numAttachments, u32 numSubPasses ) {
@@ -730,34 +924,22 @@ VKTR_RenderPass VKTR_CreateRenderPass( u32 numAttachments, u32 numSubPasses ) {
 		renderPass->subPassDepth[i] = VK_ATTACHMENT_UNUSED;
 	}
 	
-	renderPass->FBWidth = INT_MAX;
-	renderPass->FBHeight = INT_MAX;
+	//renderPass->FBWidth = INT_MAX;
+	//renderPass->FBHeight = INT_MAX;
 	
 	return renderPass;
 }
 
-VkImageLayout imageLayoutMap[] = {
-	VK_IMAGE_LAYOUT_UNDEFINED,
-	VK_IMAGE_LAYOUT_GENERAL,
-	VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-	VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
-	VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL,
-	VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-	VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-	VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-	VK_IMAGE_LAYOUT_PRESENT_SRC_KHR
-};
-
-void VKTR_SetRenderPassAttachment( VKTR_RenderPass renderPass, u32 attachment, VKTR_Image image, int loadInput, int storeOutput, VKTR_ImageLayout srcLayout, VKTR_ImageLayout dstLayout ) {
+void VKTR_SetRenderPassAttachment( VKTR_RenderPass renderPass, u32 attachment, VKTR_Format format, int samples, int loadInput, int storeOutput, VKTR_ImageLayout srcLayout, VKTR_ImageLayout dstLayout ) {
 	VKTR_Internal_RenderPass* rp = renderPass;
 	
-	VKTR_Internal_Image* img = image;
+	//VKTR_Internal_Image* img = image;
 	
 	memset( &rp->attachments[attachment], 0, sizeof( VkAttachmentDescription ) );
 	
 	VkAttachmentDescription* at = &rp->attachments[attachment];
-	at->format = formatMap[img->format];
-	at->samples = VK_SAMPLE_COUNT_1_BIT; // FIX
+	at->format = formatMap[format];
+	at->samples = samples;//VK_SAMPLE_COUNT_1_BIT; // FIX
 	at->loadOp = loadInput ? VK_ATTACHMENT_LOAD_OP_LOAD : VK_ATTACHMENT_LOAD_OP_CLEAR; // FIX
 	at->storeOp = storeOutput ? VK_ATTACHMENT_STORE_OP_STORE : VK_ATTACHMENT_STORE_OP_DONT_CARE;
 	at->stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
@@ -765,10 +947,10 @@ void VKTR_SetRenderPassAttachment( VKTR_RenderPass renderPass, u32 attachment, V
 	at->initialLayout = imageLayoutMap[srcLayout];
 	at->finalLayout = imageLayoutMap[dstLayout];
 	
-	rp->vkFBImageViews[attachment] = img->defaultView;
+	//rp->vkFBImageViews[attachment] = img->defaultView;
 	
-	rp->FBWidth = min( rp->FBWidth, img->w );
-	rp->FBHeight = min( rp->FBHeight, img->h );
+	//rp->FBWidth = min( rp->FBWidth, img->w );
+	//rp->FBHeight = min( rp->FBHeight, img->h );
 }
 
 void VKTR_SetSubPassInput( VKTR_RenderPass renderPass, u32 subPass, u32 attachment, u32 binding ) {
@@ -830,7 +1012,7 @@ void VKTR_BuildRenderPass( VKTR_RenderPass renderPass ) {
 				int hasDependency = FALSE;
 				
 				if( i > 0 ) {
-					for( int k = i - 1; k >= 0; k++ ) {
+					for( int k = i - 1; k >= 0; k-- ) {
 						for( int l = 0; l < subPasses[k].colorAttachmentCount; l++ ) {
 							if( rp->subPassInputs[i][j] == rp->subPassOutputs[k][l] ) {
 								subPassDependencies[numDependencies].srcSubpass = k;
@@ -898,6 +1080,27 @@ void VKTR_BuildRenderPass( VKTR_RenderPass renderPass ) {
 				}
 			}
 			
+			if( rp->subPassDepth[i] != VK_ATTACHMENT_UNUSED ) {
+				//if( rp->attachments[rp->subPassDepth[i]].loadOp == VK_ATTACHMENT_LOAD_OP_LOAD ) {
+				
+				if( i > 0 ) {
+					for( int k = i - 1; k >= 0; k-- ) {
+						if( rp->subPassDepth[i] == rp->subPassDepth[k] ) {
+							subPassDependencies[numDependencies].srcSubpass = k;
+							subPassDependencies[numDependencies].dstSubpass = i;
+							subPassDependencies[numDependencies].srcStageMask = VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
+							subPassDependencies[numDependencies].dstStageMask = VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
+							subPassDependencies[numDependencies].srcAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+							subPassDependencies[numDependencies].dstAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT;
+							subPassDependencies[numDependencies].dependencyFlags = VK_DEPENDENCY_BY_REGION_BIT;
+							numDependencies++;
+							
+							break;
+						}
+					}
+				}
+			}
+			
 			if( rp->subPassOutputs[i][j] != VK_ATTACHMENT_UNUSED ) {
 				attachmentRefs[i][j].attachment = rp->subPassOutputs[i][j];
 				attachmentRefs[i][j].layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
@@ -950,6 +1153,7 @@ void VKTR_BuildRenderPass( VKTR_RenderPass renderPass ) {
 	
 	vkCreateRenderPass( device, &renderPassCreateInfo, NULL, &rp->vkRenderPass );
 	
+	/*
 	VkFramebufferCreateInfo framebufferInfo = {};
 	framebufferInfo.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
 	framebufferInfo.renderPass = rp->vkRenderPass;
@@ -960,12 +1164,50 @@ void VKTR_BuildRenderPass( VKTR_RenderPass renderPass ) {
 	framebufferInfo.layers = 1;
 	
 	vkCreateFramebuffer( device, &framebufferInfo, NULL, &rp->vkFramebuffer );
+	*/
 }
 /*
 void VKTR_FreeRenderPass( VKTR_RenderPass renderPass ) {
 	
 }
 */
+
+VKTR_FrameBuffer VKTR_CreateFrameBuffer( VKTR_RenderPass renderPass ) {
+	VKTR_Internal_RenderPass* rp = renderPass;
+	
+	VKTR_Internal_FrameBuffer* fb = malloc( sizeof( VKTR_Internal_FrameBuffer ) );
+	
+	fb->renderPass = rp;
+	fb->width = INT_MAX;
+	fb->height = INT_MAX;
+	
+	return fb;
+}
+
+void VKTR_SetFrameBufferAttachment( VKTR_FrameBuffer frameBuffer, int attachment, VKTR_Image image ) {
+	VKTR_Internal_FrameBuffer* fb = frameBuffer;
+	VKTR_Internal_Image* img = image;
+	
+	fb->vkFBImageViews[attachment] = img->defaultView;
+	
+	fb->width = min( fb->width, img->w );
+	fb->height = min( fb->height, img->h );
+}
+
+void VKTR_BuildFrameBuffer( VKTR_FrameBuffer frameBuffer ) {
+	VKTR_Internal_FrameBuffer* fb = frameBuffer;
+	
+	VkFramebufferCreateInfo framebufferInfo = {};
+	framebufferInfo.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+	framebufferInfo.renderPass = fb->renderPass->vkRenderPass;
+	framebufferInfo.attachmentCount = fb->renderPass->numAttachments;
+	framebufferInfo.pAttachments = fb->vkFBImageViews;
+	framebufferInfo.width = fb->width;
+	framebufferInfo.height = fb->height;
+	framebufferInfo.layers = 1;
+	
+	vkCreateFramebuffer( device, &framebufferInfo, NULL, &fb->vkFramebuffer );
+}
 
 VKTR_Pipeline VKTR_CreatePipeline( VKTR_RenderPass renderPass, u32 subPass, int numVertexBindings, int numDescriptorLayouts ) {
 	VKTR_Internal_RenderPass* rp = renderPass;
@@ -978,10 +1220,11 @@ VKTR_Pipeline VKTR_CreatePipeline( VKTR_RenderPass renderPass, u32 subPass, int 
 	
 	pi->viewportState.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
 	pi->viewportState.viewportCount = 1;
-	pi->viewportState.pViewports = &pi->viewport;
+	//pi->viewportState.pViewports = &pi->viewport;
 	pi->viewportState.scissorCount = 1;
-	pi->viewportState.pScissors = &pi->scissor;
+	//pi->viewportState.pScissors = &pi->scissor;
 	
+	/*
 	pi->viewport.x = 0;
 	pi->viewport.y = 0;
 	pi->viewport.width = rp->FBWidth;
@@ -993,6 +1236,13 @@ VKTR_Pipeline VKTR_CreatePipeline( VKTR_RenderPass renderPass, u32 subPass, int 
 	pi->scissor.offset.y = 0;
 	pi->scissor.extent.width = rp->FBWidth;
 	pi->scissor.extent.height = rp->FBHeight;
+	*/
+	
+	pi->dynamicState.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
+	pi->dynamicState.dynamicStateCount = 2;
+	pi->dynamicState.pDynamicStates = pi->dynamicStates;
+	pi->dynamicStates[0] = VK_DYNAMIC_STATE_VIEWPORT;
+	pi->dynamicStates[1] = VK_DYNAMIC_STATE_SCISSOR;
 	
 	pi->vertexInputInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
 	pi->vertexInputInfo.pVertexBindingDescriptions = pi->vertexBindings;
@@ -1018,13 +1268,22 @@ VKTR_Pipeline VKTR_CreatePipeline( VKTR_RenderPass renderPass, u32 subPass, int 
 	pi->rasterizer.rasterizerDiscardEnable = VK_FALSE;
 	pi->rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
 	pi->rasterizer.lineWidth = 1.0f;
-	pi->rasterizer.cullMode = VK_CULL_MODE_BACK_BIT;
+	pi->rasterizer.cullMode = VK_CULL_MODE_NONE; //VK_CULL_MODE_BACK_BIT;
 	pi->rasterizer.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
 	pi->rasterizer.depthBiasEnable = VK_FALSE;
 	
 	pi->multisampling.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
-	pi->multisampling.sampleShadingEnable = VK_FALSE;
+	pi->multisampling.sampleShadingEnable = VK_TRUE;
+	pi->multisampling.minSampleShading = 1.0f;
 	pi->multisampling.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+	pi->multisampling.alphaToCoverageEnable = VK_FALSE;
+	
+	for( int i = 0; i < rp->subPassAttachmentCounts[subPass]; i++ ) {
+		pi->multisampling.rasterizationSamples = max( pi->multisampling.rasterizationSamples, rp->attachments[rp->subPassOutputs[subPass][i]].samples );
+	}
+	if( rp->subPassDepth[subPass] != VK_ATTACHMENT_UNUSED ) {
+		pi->multisampling.rasterizationSamples = max( pi->multisampling.rasterizationSamples, rp->attachments[rp->subPassDepth[subPass]].samples );
+	}
 	
 	pi->colourBlending.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
 	pi->colourBlending.logicOpEnable = VK_FALSE;
@@ -1052,8 +1311,38 @@ VKTR_Pipeline VKTR_CreatePipeline( VKTR_RenderPass renderPass, u32 subPass, int 
 	pi->numDescriptorLayouts = numDescriptorLayouts;
 	for( int i = 0; i < 8; i++ ) {
 		pi->descriptorLayoutInfo[i].sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+		pi->descriptorLayoutInfo[i].pNext = &pi->descriptorLayoutFlagInfo[i];
 		pi->descriptorLayoutInfo[i].bindingCount = 0;
 		pi->descriptorLayoutInfo[i].pBindings = pi->descriptorLayoutBindings[i];
+		
+		pi->descriptorLayoutFlagInfo[i].sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO_EXT;
+		pi->descriptorLayoutFlagInfo[i].bindingCount = 0;
+		pi->descriptorLayoutFlagInfo[i].pBindingFlags = pi->descriptorLayoutBindingFlags[i];
+	}
+	
+	return pi;
+}
+
+VKTR_Pipeline VKTR_CreateComputePipeline( int numDescriptorLayouts ) {
+	VKTR_Internal_Pipeline* pi = malloc( sizeof( VKTR_Internal_Pipeline ) );
+	memset( pi, 0, sizeof( VKTR_Internal_Pipeline ) );
+	
+	pi->pipelineLayoutCreateInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+	pi->pipelineLayoutCreateInfo.setLayoutCount = numDescriptorLayouts;
+	pi->pipelineLayoutCreateInfo.pSetLayouts = pi->descriptorLayouts;
+	pi->pipelineLayoutCreateInfo.pushConstantRangeCount = 0;
+	pi->pipelineLayoutCreateInfo.pPushConstantRanges = pi->pushConsts;
+	
+	pi->numDescriptorLayouts = numDescriptorLayouts;
+	for( int i = 0; i < 8; i++ ) {
+		pi->descriptorLayoutInfo[i].sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+		pi->descriptorLayoutInfo[i].pNext = &pi->descriptorLayoutFlagInfo[i];
+		pi->descriptorLayoutInfo[i].bindingCount = 0;
+		pi->descriptorLayoutInfo[i].pBindings = pi->descriptorLayoutBindings[i];
+		
+		pi->descriptorLayoutFlagInfo[i].sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO_EXT;
+		pi->descriptorLayoutFlagInfo[i].bindingCount = 0;
+		pi->descriptorLayoutFlagInfo[i].pBindingFlags = pi->descriptorLayoutBindingFlags[i];
 	}
 	
 	return pi;
@@ -1067,21 +1356,12 @@ void VKTR_PipelineSetShader( VKTR_Pipeline pipeline, VKTR_ShaderStage stage, VKT
 	pi->stageCreateInfo[n].stage = stageMap[stage];
 	pi->stageCreateInfo[n].module = shader;
 	pi->stageCreateInfo[n].pName = "main";
+	
+	pi->stageCreateInfo[n].flags = VK_PIPELINE_SHADER_STAGE_CREATE_ALLOW_VARYING_SUBGROUP_SIZE_BIT_EXT;
 }
 
 void VKTR_PipelineSetDepthFunction( VKTR_Pipeline pipeline, VKTR_DepthFunction function ) {
 	VKTR_Internal_Pipeline* pi = pipeline;
-	
-	VkCompareOp depthFnMap[] = {
-		VK_COMPARE_OP_LESS,
-		VK_COMPARE_OP_LESS_OR_EQUAL,
-		VK_COMPARE_OP_EQUAL,
-		VK_COMPARE_OP_NOT_EQUAL,
-		VK_COMPARE_OP_GREATER_OR_EQUAL,
-		VK_COMPARE_OP_GREATER,
-		VK_COMPARE_OP_ALWAYS,
-		VK_COMPARE_OP_NEVER
-	};
 	
 	pi->depthState.depthCompareOp = depthFnMap[function];
 }
@@ -1091,6 +1371,21 @@ void VKTR_PipelineSetDepthEnable( VKTR_Pipeline pipeline, int testEnable, int wr
 	
 	pi->depthState.depthTestEnable = testEnable;
 	pi->depthState.depthWriteEnable = writeEnable;
+}
+
+void VKTR_PipelineSetDepthClamp( VKTR_Pipeline pipeline, int enable ) {
+	VKTR_Internal_Pipeline* pi = pipeline;
+	
+	pi->rasterizer.depthClampEnable = enable;
+}
+
+void VKTR_PipelineSetDepthBias( VKTR_Pipeline pipeline, int enable, float constantFactor, float slopeFactor, float clamp ) {
+	VKTR_Internal_Pipeline* pi = pipeline;
+	
+	pi->rasterizer.depthBiasEnable = enable;
+	pi->rasterizer.depthBiasConstantFactor = constantFactor;
+	pi->rasterizer.depthBiasSlopeFactor = slopeFactor;
+	pi->rasterizer.depthBiasClamp = clamp;
 }
 
 void VKTR_PipelineSetViewport( VKTR_Pipeline pipeline, float x, float y, float z, float width, float height, float depth ) {
@@ -1115,27 +1410,6 @@ void VKTR_PipelineSetScissor( VKTR_Pipeline pipeline, u32 x, u32 y, u32 width, u
 
 void VKTR_PipelineSetBlend( VKTR_Pipeline pipeline, u32 attachment, VKTR_BlendOp blendOp, VKTR_BlendFactor src, VKTR_BlendFactor dst ) {
 	VKTR_Internal_Pipeline* pi = pipeline;
-	
-	VkBlendOp blendOpMap[] = {
-		VK_BLEND_OP_ADD,
-		VK_BLEND_OP_SUBTRACT,
-		VK_BLEND_OP_REVERSE_SUBTRACT,
-		VK_BLEND_OP_MIN,
-		VK_BLEND_OP_MAX 
-	};
-	
-	VkBlendFactor blendFactorMap[] = {
-		VK_BLEND_FACTOR_ZERO,
-		VK_BLEND_FACTOR_ONE,
-		VK_BLEND_FACTOR_SRC_ALPHA,
-		VK_BLEND_FACTOR_DST_ALPHA,
-		VK_BLEND_FACTOR_SRC_COLOR,
-		VK_BLEND_FACTOR_DST_COLOR,
-		VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA,
-		VK_BLEND_FACTOR_ONE_MINUS_DST_ALPHA,
-		VK_BLEND_FACTOR_ONE_MINUS_SRC_COLOR,
-		VK_BLEND_FACTOR_ONE_MINUS_DST_COLOR
-	};
 	
 	pi->colourBlendAttachments[attachment].colorBlendOp = blendOpMap[blendOp];
 	pi->colourBlendAttachments[attachment].srcColorBlendFactor = blendFactorMap[src];
@@ -1165,23 +1439,29 @@ void VKTR_PipelineSetDescriptorBinding( VKTR_Pipeline pipeline, u32 layoutIndex,
     pi->descriptorLayoutBindings[layoutIndex][binding].descriptorCount = count;
     pi->descriptorLayoutBindings[layoutIndex][binding].stageFlags = stageMap[stage];
     pi->descriptorLayoutBindings[layoutIndex][binding].pImmutableSamplers = NULL;
+    
+    pi->descriptorLayoutBindingFlags[layoutIndex][binding] = VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT;
 	
     if( binding >= pi->descriptorLayoutInfo[layoutIndex].bindingCount ) {
 		pi->descriptorLayoutInfo[layoutIndex].bindingCount = binding + 1;
+		pi->descriptorLayoutFlagInfo[layoutIndex].bindingCount = binding + 1;
 	}
 }
 
-void VKTR_PipelineSetImmutableSamplerBinding( VKTR_Pipeline pipeline, u32 layoutIndex, u32 binding, VKTR_ShaderStage stage, VKTR_Sampler sampler ) {
+void VKTR_PipelineSetImmutableSamplerBinding( VKTR_Pipeline pipeline, u32 layoutIndex, u32 binding, VKTR_ShaderStage stage, VKTR_Sampler* sampler ) {
 	VKTR_Internal_Pipeline* pi = pipeline;
 	
     pi->descriptorLayoutBindings[layoutIndex][binding].binding = binding;
     pi->descriptorLayoutBindings[layoutIndex][binding].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLER;
     pi->descriptorLayoutBindings[layoutIndex][binding].descriptorCount = 1;
     pi->descriptorLayoutBindings[layoutIndex][binding].stageFlags = stageMap[stage];
-    pi->descriptorLayoutBindings[layoutIndex][binding].pImmutableSamplers = (VkSampler*)&sampler;
+    pi->descriptorLayoutBindings[layoutIndex][binding].pImmutableSamplers = (VkSampler*)sampler;
+    
+    pi->descriptorLayoutBindingFlags[layoutIndex][binding] = VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT;
 	
     if( binding >= pi->descriptorLayoutInfo[layoutIndex].bindingCount ) {
 		pi->descriptorLayoutInfo[layoutIndex].bindingCount = binding + 1;
+		pi->descriptorLayoutFlagInfo[layoutIndex].bindingCount = binding + 1;
 	}
 }
 
@@ -1206,42 +1486,36 @@ void VKTR_BuildPipeline( VKTR_Pipeline pipeline ) {
 	
 	vkCreatePipelineLayout( device, &pi->pipelineLayoutCreateInfo, NULL, &pi->pipelineLayout );
 	
-	VkGraphicsPipelineCreateInfo pipelineCreateInfo = {};
-	pipelineCreateInfo.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
-	pipelineCreateInfo.stageCount = pi->numStages;
-	pipelineCreateInfo.pStages = pi->stageCreateInfo;
-	pipelineCreateInfo.pVertexInputState = &pi->vertexInputInfo;
-	pipelineCreateInfo.pInputAssemblyState = &pi->inputAssembly;
-	pipelineCreateInfo.pViewportState = &pi->viewportState;
-	pipelineCreateInfo.pRasterizationState = &pi->rasterizer;
-	pipelineCreateInfo.pMultisampleState = &pi->multisampling;
-	pipelineCreateInfo.pDepthStencilState = &pi->depthState;
-	pipelineCreateInfo.pColorBlendState = &pi->colourBlending;
-	pipelineCreateInfo.pDynamicState = NULL;
-	pipelineCreateInfo.layout = pi->pipelineLayout;
-	pipelineCreateInfo.renderPass = pi->renderPass->vkRenderPass;
-	pipelineCreateInfo.subpass = pi->subPass;
-	
-	vkCreateGraphicsPipelines( device, VK_NULL_HANDLE, 1, &pipelineCreateInfo, NULL, &pi->pipeline );
+	if( pi->renderPass != NULL ) {
+		VkGraphicsPipelineCreateInfo pipelineCreateInfo = {};
+		pipelineCreateInfo.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+		pipelineCreateInfo.stageCount = pi->numStages;
+		pipelineCreateInfo.pStages = pi->stageCreateInfo;
+		pipelineCreateInfo.pVertexInputState = &pi->vertexInputInfo;
+		pipelineCreateInfo.pInputAssemblyState = &pi->inputAssembly;
+		pipelineCreateInfo.pViewportState = &pi->viewportState;
+		pipelineCreateInfo.pRasterizationState = &pi->rasterizer;
+		pipelineCreateInfo.pMultisampleState = &pi->multisampling;
+		pipelineCreateInfo.pDepthStencilState = &pi->depthState;
+		pipelineCreateInfo.pColorBlendState = &pi->colourBlending;
+		pipelineCreateInfo.pDynamicState = &pi->dynamicState;
+		pipelineCreateInfo.layout = pi->pipelineLayout;
+		pipelineCreateInfo.renderPass = pi->renderPass->vkRenderPass;
+		pipelineCreateInfo.subpass = pi->subPass;
+		
+		vkCreateGraphicsPipelines( device, VK_NULL_HANDLE, 1, &pipelineCreateInfo, NULL, &pi->pipeline );
+		
+	} else {
+		VkComputePipelineCreateInfo pipelineCreateInfo = {};
+		pipelineCreateInfo.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
+		pipelineCreateInfo.stage = pi->stageCreateInfo[0];
+		pipelineCreateInfo.layout = pi->pipelineLayout;
+		
+		vkCreateComputePipelines( device, VK_NULL_HANDLE, 1, &pipelineCreateInfo, NULL, &pi->pipeline );
+	}
 }
 
-VkFilter filterMap[] = {
-	VK_FILTER_NEAREST,
-	VK_FILTER_LINEAR
-};
-
-VkSamplerMipmapMode mipFilterMap[] = {
-	VK_SAMPLER_MIPMAP_MODE_NEAREST,
-	VK_SAMPLER_MIPMAP_MODE_LINEAR
-};
-
-VkSamplerAddressMode wrapMap[] = {
-	VK_SAMPLER_ADDRESS_MODE_REPEAT,
-	VK_SAMPLER_ADDRESS_MODE_MIRRORED_REPEAT,
-	VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE
-};
-
-VKTR_Sampler VKTR_CreateSampler( VKTR_FilterMode min, VKTR_FilterMode mag, VKTR_FilterMode mip, VKTR_WrapMode wrap, float maxAniso ) {
+VKTR_Sampler VKTR_CreateSampler( VKTR_FilterMode min, VKTR_FilterMode mag, VKTR_FilterMode mip, VKTR_WrapMode wrap, float maxAniso, int compareEnable ) {
 	VkSamplerCreateInfo samplerInfo = {};
 	samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
 	samplerInfo.minFilter = filterMap[min];
@@ -1251,6 +1525,11 @@ VKTR_Sampler VKTR_CreateSampler( VKTR_FilterMode min, VKTR_FilterMode mag, VKTR_
 	samplerInfo.addressModeV = wrapMap[wrap];
 	samplerInfo.anisotropyEnable = maxAniso > 1.0f;
 	samplerInfo.maxAnisotropy = maxAniso;
+	
+	if( compareEnable ) {
+		samplerInfo.compareEnable = VK_TRUE;
+		samplerInfo.compareOp = VK_COMPARE_OP_LESS;//_OR_EQUAL;
+	}
 	
 	VkSampler sampler;
 	vkCreateSampler( device, &samplerInfo, NULL, &sampler );
@@ -1282,8 +1561,12 @@ VKTR_DescriptorPool VKTR_CreateDescriptorPool( u32 descriptorCount, u32 setCount
 	
 	VkDescriptorPoolCreateInfo poolInfo = {};
 	poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-	poolInfo.pNext = &inlineUniformCreateInfo;
-	poolInfo.poolSizeCount = 6;
+	if( inlineUniformBytes > 0 ) {
+		poolInfo.pNext = &inlineUniformCreateInfo;
+		poolInfo.poolSizeCount = 6;
+	} else {
+		poolInfo.poolSizeCount = 5;
+	}
 	poolInfo.pPoolSizes = poolSize;
 	poolInfo.maxSets = setCount;
 	
@@ -1345,6 +1628,16 @@ void VKTR_SetSamplerBinding( VKTR_DescriptorSet set, int binding, int element, V
 	updateDescriptorSet( set, binding, element, VK_DESCRIPTOR_TYPE_SAMPLER, NULL, &imageInfo, NULL, NULL );
 }
 
+void VKTR_SetImageBinding( VKTR_DescriptorSet set, int binding, int element, VKTR_Image image ) {
+	VKTR_Internal_Image* img = image;
+	
+	VkDescriptorImageInfo imageInfo = {};
+	imageInfo.imageView = img->defaultView;
+	imageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+	
+	updateDescriptorSet( set, binding, element, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, NULL, &imageInfo, NULL, NULL );
+}
+
 void VKTR_SetUniformBinding( VKTR_DescriptorSet set, int binding, int element, VKTR_Buffer buffer, int offset, int size ) {
 	VKTR_Internal_Buffer* buf = buffer;
 	
@@ -1363,6 +1656,17 @@ void VKTR_SetInlineUniformBinding( VKTR_DescriptorSet set, int binding, int size
 	inlineInfo.pData = data;
 	
 	updateDescriptorSet( set, binding, 0, VK_DESCRIPTOR_TYPE_INLINE_UNIFORM_BLOCK_EXT, NULL, NULL, NULL, &inlineInfo );
+}
+
+void VKTR_SetBufferBinding( VKTR_DescriptorSet set, int binding, int element, VKTR_Buffer buffer, int offset, int size ) {
+	VKTR_Internal_Buffer* buf = buffer;
+	
+	VkDescriptorBufferInfo bufferInfo = {};
+	bufferInfo.buffer = buf->buffer;
+	bufferInfo.offset = offset;
+	bufferInfo.range = size;
+	
+	updateDescriptorSet( set, binding, element, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, &bufferInfo, NULL, NULL, NULL );
 }
 
 void VKTR_SetInputAttachmentBinding( VKTR_DescriptorSet set, int binding, int element, VKTR_Image image ) {
@@ -1404,17 +1708,22 @@ void VKTR_CMD_DrawOffset( VKTR_CommandBuffer buffer, u32 offset, u32 count ) {
 	vkCmdDraw( buffer, count, 1, offset, 0 );
 }
 
-void VKTR_CMD_StartRenderPass( VKTR_CommandBuffer buffer, VKTR_RenderPass renderPass ) {
+void VKTR_CMD_Dispatch( VKTR_CommandBuffer buffer, u32 x, u32 y, u32 z ) {
+	vkCmdDispatch( buffer, x, y, z );
+}
+
+void VKTR_CMD_StartRenderPass( VKTR_CommandBuffer buffer, VKTR_RenderPass renderPass, VKTR_FrameBuffer frameBuffer ) {
 	VKTR_Internal_RenderPass* rp = renderPass;
+	VKTR_Internal_FrameBuffer* fb = frameBuffer;
 	
 	VkRenderPassBeginInfo renderpassInfo = {};
 	renderpassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
 	renderpassInfo.renderPass = rp->vkRenderPass;
-	renderpassInfo.framebuffer = rp->vkFramebuffer;
+	renderpassInfo.framebuffer = fb->vkFramebuffer;
 	renderpassInfo.renderArea.offset.x = 0;
 	renderpassInfo.renderArea.offset.y = 0;
-	renderpassInfo.renderArea.extent.width = rp->FBWidth;
-	renderpassInfo.renderArea.extent.height = rp->FBHeight;
+	renderpassInfo.renderArea.extent.width = fb->width;
+	renderpassInfo.renderArea.extent.height = fb->height;
 	
 	VkClearValue clearColours[8];
 	memset( clearColours, 0, sizeof( clearColours ) );
@@ -1425,6 +1734,24 @@ void VKTR_CMD_StartRenderPass( VKTR_CommandBuffer buffer, VKTR_RenderPass render
 	renderpassInfo.pClearValues = clearColours;
 	
 	vkCmdBeginRenderPass( buffer, &renderpassInfo, VK_SUBPASS_CONTENTS_INLINE );
+	
+	VkViewport viewport = {};
+	viewport.x = 0;
+	viewport.y = 0;
+	viewport.width = fb->width;
+	viewport.height = fb->height;
+	viewport.minDepth = 0.0f;
+	viewport.maxDepth = 1.0f;
+	
+	vkCmdSetViewport( buffer, 0, 1, &viewport );
+	
+	VkRect2D scissor = {};
+	scissor.offset.x = 0;
+	scissor.offset.y = 0;
+	scissor.extent.width = fb->width;
+	scissor.extent.height = fb->height;
+	
+	vkCmdSetScissor( buffer, 0, 1, &scissor );
 }
 
 void VKTR_CMD_NextSubPass( VKTR_CommandBuffer buffer ) {
@@ -1435,7 +1762,7 @@ void VKTR_CMD_EndRenderPass( VKTR_CommandBuffer buffer ) {
 	vkCmdEndRenderPass( buffer );
 }
 
-void VKTR_CMD_Clear( VKTR_CommandBuffer buffer, u32 attachment, vec4 clearVal ) {
+void VKTR_CMD_Clear( VKTR_CommandBuffer buffer, u32 attachment, vec4 clearVal, vec4 region ) {
 	VkClearAttachment atc = {};
 	atc.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
 	atc.colorAttachment = attachment;
@@ -1445,20 +1772,106 @@ void VKTR_CMD_Clear( VKTR_CommandBuffer buffer, u32 attachment, vec4 clearVal ) 
 	atc.clearValue.color.float32[3] = clearVal[3];
 	
 	VkClearRect cr = {};
-	cr.rect.offset.x = 0;
-	cr.rect.offset.y = 0;
-	cr.rect.extent.width = INT_MAX; // FIX
-	cr.rect.extent.height = INT_MAX; // FIX
+	cr.rect.offset.x = region[0];
+	cr.rect.offset.y = region[1];
+	cr.rect.extent.width = region[2];
+	cr.rect.extent.height = region[3];
 	cr.baseArrayLayer = 0;
 	cr.layerCount = 1;
 	
 	vkCmdClearAttachments( buffer, 1, &atc, 1, &cr );
 }
 
+void VKTR_CMD_ClearDepth( VKTR_CommandBuffer buffer, float clearVal, vec4 region ) {
+	VkClearAttachment atc = {};
+	atc.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
+	atc.clearValue.depthStencil.depth = clearVal;
+	
+	VkClearRect cr = {};
+	cr.rect.offset.x = region[0];
+	cr.rect.offset.y = region[1];
+	cr.rect.extent.width = region[2];
+	cr.rect.extent.height = region[3];
+	cr.baseArrayLayer = 0;
+	cr.layerCount = 1;
+	
+	vkCmdClearAttachments( buffer, 1, &atc, 1, &cr );
+}
+
+void VKTR_CMD_TransferImageOwnership( VKTR_CommandBuffer buffer, VKTR_Image image, VKTR_QueueType srcQueueType, VKTR_QueueType dstQueueType, VKTR_ImageLayout srcLayout, VKTR_ImageLayout dstLayout ) {
+	VKTR_Internal_Image* img = image;
+	
+	int queues[3] = {
+		graphicsQueueFamily,
+		computeQueueFamily,
+		transferQueueFamily
+	};
+	
+	if( queues[srcQueueType] < 0 ) {
+		srcQueueType = VKTR_QUEUETYPE_GRAPHICS;
+	}
+	if( queues[dstQueueType] < 0 ) {
+		dstQueueType = VKTR_QUEUETYPE_GRAPHICS;
+	}
+	
+	VkImageMemoryBarrier barrierInfo = {};
+	barrierInfo.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+	barrierInfo.srcAccessMask = VK_ACCESS_MEMORY_WRITE_BIT;
+	barrierInfo.dstAccessMask = VK_ACCESS_MEMORY_READ_BIT;
+	barrierInfo.oldLayout = imageLayoutMap[srcLayout];
+	barrierInfo.newLayout = imageLayoutMap[dstLayout];
+	barrierInfo.srcQueueFamilyIndex = queues[srcQueueType];
+	barrierInfo.dstQueueFamilyIndex = queues[dstQueueType];
+	barrierInfo.image = img->tex;
+	barrierInfo.subresourceRange.baseMipLevel = 0;
+	barrierInfo.subresourceRange.levelCount = 1;
+	barrierInfo.subresourceRange.baseArrayLayer = 0;
+	barrierInfo.subresourceRange.layerCount = 1;
+	
+	if( img->format != VKTR_FORMAT_D32F ) {
+		barrierInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+		
+	} else {
+		barrierInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
+	}
+	
+	vkCmdPipelineBarrier( buffer, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 0, NULL, 0, NULL, 1, &barrierInfo );
+}
+
+void VKTR_CMD_TransferBufferOwnership( VKTR_CommandBuffer buffer, VKTR_Buffer transferBuffer, VKTR_QueueType srcQueueType, VKTR_QueueType dstQueueType ) {
+	VKTR_Internal_Buffer* buf = transferBuffer;
+	
+	int queues[3] = {
+		graphicsQueueFamily,
+		computeQueueFamily,
+		transferQueueFamily
+	};
+	
+	if( queues[srcQueueType] < 0 ) {
+		srcQueueType = VKTR_QUEUETYPE_GRAPHICS;
+	}
+	if( queues[dstQueueType] < 0 ) {
+		dstQueueType = VKTR_QUEUETYPE_GRAPHICS;
+	}
+	
+	VkBufferMemoryBarrier barrierInfo = {};
+	barrierInfo.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;
+	barrierInfo.srcAccessMask = VK_ACCESS_MEMORY_WRITE_BIT;
+	barrierInfo.dstAccessMask = VK_ACCESS_MEMORY_READ_BIT;
+	barrierInfo.srcQueueFamilyIndex = queues[srcQueueType];
+	barrierInfo.dstQueueFamilyIndex = queues[dstQueueType];
+	barrierInfo.buffer = buf->buffer;
+	barrierInfo.offset = 0;
+	barrierInfo.size = VK_WHOLE_SIZE;
+	
+	vkCmdPipelineBarrier( buffer, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 0, NULL, 1, &barrierInfo, 0, NULL );
+}
+
 void VKTR_CMD_CopyToImage( VKTR_CommandBuffer buffer, VKTR_Buffer src, VKTR_Image dst ) {
 	VKTR_Internal_Buffer* buf = src;
 	VKTR_Internal_Image* img = dst;
 	
+	/*
 	VkImageMemoryBarrier layoutBarrier = {};
 	layoutBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
 	layoutBarrier.srcAccessMask = VK_ACCESS_MEMORY_WRITE_BIT;
@@ -1477,6 +1890,8 @@ void VKTR_CMD_CopyToImage( VKTR_CommandBuffer buffer, VKTR_Buffer src, VKTR_Imag
 	layoutBarrier.subresourceRange.layerCount = 1;
 	
 	vkCmdPipelineBarrier( buffer, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 0, NULL, 0, NULL, 1, &layoutBarrier );
+	*/
+	//VKTR_CMD_TransferImageOwnership( buffer, dst, VKTR_QUEUETYPE_TRANSFER, VKTR_QUEUETYPE_TRANSFER, VKTR_IMAGELAYOUT_UNDEFINED, VKTR_IMAGELAYOUT_TRANSFER_DST );
 	
 	VkBufferImageCopy region = {};
 	region.bufferOffset = 0;
@@ -1495,6 +1910,7 @@ void VKTR_CMD_CopyToImage( VKTR_CommandBuffer buffer, VKTR_Buffer src, VKTR_Imag
 	
 	vkCmdCopyBufferToImage( buffer, buf->buffer, img->tex, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region );
 	
+	/*
 	VkImageMemoryBarrier layoutBarrier2 = {};
 	layoutBarrier2.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
 	layoutBarrier2.srcAccessMask = VK_ACCESS_MEMORY_WRITE_BIT;
@@ -1513,14 +1929,21 @@ void VKTR_CMD_CopyToImage( VKTR_CommandBuffer buffer, VKTR_Buffer src, VKTR_Imag
 	layoutBarrier2.subresourceRange.layerCount = 1;
 	
 	vkCmdPipelineBarrier( buffer, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 0, NULL, 0, NULL, 1, &layoutBarrier2 );
+	*/
+	//VKTR_CMD_TransferImageOwnership( buffer, dst, VKTR_QUEUETYPE_TRANSFER, VKTR_QUEUETYPE_GRAPHICS, VKTR_IMAGELAYOUT_TRANSFER_DST, VKTR_IMAGELAYOUT_SHADER_READ );
 }
 
-VKTR_Internal_Pipeline* currentPipeline;
+VKTR_Internal_Pipeline* currentPipeline; // TODO replace global with buffer property
 
 void VKTR_CMD_BindPipeline( VKTR_CommandBuffer buffer, VKTR_Pipeline pipeline ) {
 	VKTR_Internal_Pipeline* pi = pipeline;
 	
-	vkCmdBindPipeline( buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pi->pipeline );
+	if( pi->renderPass != NULL ) {
+		vkCmdBindPipeline( buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pi->pipeline );
+		
+	} else {
+		vkCmdBindPipeline( buffer, VK_PIPELINE_BIND_POINT_COMPUTE, pi->pipeline );
+	}
 	
 	currentPipeline = pi;
 }
@@ -1530,5 +1953,10 @@ void VKTR_CMD_PushConst( VKTR_CommandBuffer buffer, VKTR_ShaderStage stage, u32 
 }
 
 void VKTR_CMD_BindDescriptorSet( VKTR_CommandBuffer buffer, VKTR_DescriptorSet set ) {
-	vkCmdBindDescriptorSets( buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, currentPipeline->pipelineLayout, 0, 1, (VkDescriptorSet*)&set, 0, NULL );
+	if( currentPipeline->renderPass != NULL ) {
+		vkCmdBindDescriptorSets( buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, currentPipeline->pipelineLayout, 0, 1, (VkDescriptorSet*)&set, 0, NULL );
+		
+	} else {
+		vkCmdBindDescriptorSets( buffer, VK_PIPELINE_BIND_POINT_COMPUTE, currentPipeline->pipelineLayout, 0, 1, (VkDescriptorSet*)&set, 0, NULL );
+	}
 }

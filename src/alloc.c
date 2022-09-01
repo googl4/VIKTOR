@@ -94,3 +94,138 @@ void dealloc( allocator_t* allocator, size_t address ) {
 	u32 b = ( address % allocator->chunkSize ) / allocator->chunks[c].blockSize;
 	releaseBlock( &allocator->chunks[c], b );
 }
+
+
+/*
+typedef struct {
+	u32 size;
+	u16 next;
+	u8 free;
+} compactAllocatorBlock_t;
+
+typedef struct {
+	compactAllocatorBlock_t* blocks;
+	u16 maxBlocks;
+} compactAllocator_t;
+*/
+
+void setupCompactAllocator( compactAllocator_t* allocator, size_t size, u16 maxBlocks ) {
+	allocator->maxBlocks = maxBlocks;
+	allocator->blocks = calloc( maxBlocks, sizeof( compactAllocatorBlock_t ) );
+	
+	allocator->blocks[0].size = size;
+	allocator->blocks[0].next = 1;
+	allocator->blocks[0].free = TRUE;
+}
+
+size_t compactAlloc( compactAllocator_t* allocator, size_t size, size_t alignment ) {
+	int minBlock = -1;
+	u32 minBlockSize = UINT32_MAX;
+	size_t minOffset = 0;
+	u32 minAlign = 0;
+	
+	int searchBlock = 0;
+	size_t offset = 0;
+	
+	while( allocator->blocks[searchBlock].size > 0 ) {
+		u32 align = ( alignment - offset % alignment ) % alignment;
+		u32 alignedSize = size + align;
+		
+		if( alignedSize <= allocator->blocks[searchBlock].size && allocator->blocks[searchBlock].size < minBlockSize && allocator->blocks[searchBlock].free ) {
+			minBlock = searchBlock;
+			minBlockSize = allocator->blocks[searchBlock].size;
+			minOffset = offset;
+			minAlign = align;
+		}
+		
+		offset += allocator->blocks[searchBlock].size;
+		searchBlock = allocator->blocks[searchBlock].next;
+	}
+	
+	if( minBlock < 0 ) {
+		return SIZE_MAX;
+	}
+	
+	allocator->blocks[minBlock].free = FALSE;
+	
+	u32 alignedSize = size + minAlign;
+	int nextBlock = allocator->blocks[minBlock].next;
+	
+	if( allocator->blocks[nextBlock].size == 0 ) {
+		allocator->blocks[nextBlock].size = allocator->blocks[minBlock].size - alignedSize;
+		allocator->blocks[nextBlock].free = TRUE;
+		
+		if( allocator->blocks[nextBlock+1].size == 0 ) { // FIX: nextBlock + 1 == maxBlocks
+			allocator->blocks[nextBlock].next = nextBlock + 1;
+			
+		} else {
+			for( int i = 0; i < allocator->maxBlocks; i++ ) {
+				if( allocator->blocks[i].size == 0 ) {
+					allocator->blocks[nextBlock].next = i;
+					break;
+				}
+			}
+		}
+		
+	} else if( allocator->blocks[nextBlock].free ) {
+		allocator->blocks[nextBlock].size += allocator->blocks[minBlock].size - alignedSize;
+		
+	} else {
+		int newBlock = -1;
+		
+		for( int i = 0; i < allocator->maxBlocks; i++ ) {
+			if( allocator->blocks[i].size == 0 ) {
+				newBlock = i;
+				break;
+			}
+		}
+		
+		// FIX: newBlock < 0
+		
+		allocator->blocks[newBlock].size = allocator->blocks[minBlock].size - alignedSize;
+		allocator->blocks[newBlock].next = nextBlock;
+		allocator->blocks[newBlock].free = TRUE;
+		
+		allocator->blocks[minBlock].next = newBlock;
+	}
+	
+	allocator->blocks[minBlock].size = alignedSize;
+	
+	return minOffset + minAlign;
+}
+
+void compactDealloc( compactAllocator_t* allocator, size_t offset ) {
+	int searchBlock = 0;
+	size_t searchOffset = 0;
+	int prevBlock = -1;
+	
+	while( allocator->blocks[searchBlock].size > 0 ) {
+		if( searchOffset + allocator->blocks[searchBlock].size > offset ) {
+			if( prevBlock >= 0 ) {
+				if( allocator->blocks[prevBlock].free ) {
+					allocator->blocks[prevBlock].size += allocator->blocks[searchBlock].size;
+					allocator->blocks[searchBlock].size = 0;
+					allocator->blocks[prevBlock].next = allocator->blocks[searchBlock].next;
+					
+					searchBlock = prevBlock;
+					//return;
+				}
+			}
+			
+			allocator->blocks[searchBlock].free = TRUE;
+			
+			int nextBlock = allocator->blocks[searchBlock].next;
+			if( allocator->blocks[nextBlock].size > 0 && allocator->blocks[nextBlock].free ) {
+				allocator->blocks[searchBlock].size += allocator->blocks[nextBlock].size;
+				allocator->blocks[nextBlock].size = 0;
+				allocator->blocks[searchBlock].next = allocator->blocks[nextBlock].next;
+			}
+			
+			return;
+		}
+		
+		searchOffset += allocator->blocks[searchBlock].size;
+		prevBlock = searchBlock;
+		searchBlock = allocator->blocks[searchBlock].next;
+	}
+}

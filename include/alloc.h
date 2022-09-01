@@ -25,3 +25,19 @@ typedef struct {
 void setupAllocator( allocator_t* allocator, u32 numChunks, size_t chunkSize, size_t minBlockSize );
 size_t alloc( allocator_t* allocator, size_t size, size_t alignment );
 void dealloc( allocator_t* allocator, size_t address );
+
+
+typedef struct {
+	u32 size;
+	u16 next;
+	u8 free;
+} compactAllocatorBlock_t;
+
+typedef struct {
+	compactAllocatorBlock_t* blocks;
+	u16 maxBlocks;
+} compactAllocator_t;
+
+void setupCompactAllocator( compactAllocator_t* allocator, size_t size, u16 maxBlocks );
+size_t compactAlloc( compactAllocator_t* allocator, size_t size, size_t alignment );
+void compactDealloc( compactAllocator_t* allocator, size_t offset );
